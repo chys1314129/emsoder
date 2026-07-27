@@ -1,6 +1,6 @@
 # EMSoder Desktop
 
-独立 Electron 桌面壳，布局贴近 **Qoder**，品牌色为 **天蓝色**（v2.0.0）。
+独立 Electron 桌面壳，布局贴近锤子系统的拟物风格（v2.0.0）。
 
 - 免费 · 无账号 · 无 Credits  
 - 自定义第三方模型（OpenAI 兼容 / Anthropic / Ollama / 自建网关）  
