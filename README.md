@@ -1,4 +1,5 @@
 # EMSoder Desktop
+<img width="1904" height="993" alt="EMS" src="https://github.com/user-attachments/assets/b0b3801f-be59-4a49-9b4e-23942c1fe528" />
 
 独立 Electron 桌面壳，布局贴近锤子系统的拟物风格（v2.0.0）。
 
@@ -8,7 +9,7 @@
 - **Monaco** 语法高亮 + 行内补全 + **TS/JS 简易 LSP**
 - **Node 调试器** · **真 PTY 终端** · Agent 输出镜像
 - 底部面板：终端 · Git · 调试 · 问题 · 规则
-- 免费多模型 BYOK（Quest 与 Chat 共用）
+- 自定义多模型 BYOK（Quest 与 Chat 共用）
 - **Skills 侧栏** · **@ 引用文件** · **apply_diff** · **自动授权**
 - 白天 / 夜晚主题自适应；Google 四色品牌 + 拟物风格
 - 长期记忆（关键词 + tag 打分，按需召回）
