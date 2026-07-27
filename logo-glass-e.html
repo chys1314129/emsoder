@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>EMSoder Logo · S3 琉璃砖 E 优化</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --g-blue:   #4285F4;
+  --g-red:    #EA4335;
+  --g-yellow: #FBBC04;
+  --g-green:  #34A853;
+  --g-blue-d: #1a73e8;
+  --g-blue-l: #6fa3f7;
+  --g-red-l:  #f06a5c;
+  --g-red-d:  #c3372a;
+  --g-yellow-l:#ffd24a;
+  --g-yellow-d:#d9a300;
+  --g-green-l:#5dc877;
+  --g-green-d:#2d8e47;
+  --paper:    #f4f1ea;
+  --card:     #fbfaf6;
+  --edge:     #d8d2c4;
+  --ink:      #2b2a26;
+  --ink-2:    #6b675e;
+  --ink-3:    #9a9488;
+  --raised: 0 1px 0 rgba(255,255,255,.9) inset, 0 -1px 0 rgba(0,0,0,.06) inset, 0 2px 5px rgba(60,50,30,.16);
+  --raised-strong: 0 1px 0 rgba(255,255,255,.95) inset, 0 -2px 0 rgba(0,0,0,.08) inset, 0 4px 12px rgba(60,50,30,.2);
+  /* 琉璃砖通用质感 */
+  --glass-shadow: 0 1px 1px rgba(0,0,0,.18), 0 1px 0 rgba(255,255,255,.5) inset, 0 -1px 1px rgba(0,0,0,.15) inset, 0 0 0 1px rgba(0,0,0,.08);
+}
+
+html, body { height: 100%; }
+body {
+  font-family: "PingFang SC", "Helvetica Neue", "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--paper);
+  background-image:
+    radial-gradient(circle at 15% 8%, rgba(66,133,244,.06), transparent 35%),
+    radial-gradient(circle at 85% 92%, rgba(234,67,53,.05), transparent 35%);
+  color: var(--ink);
+  padding: 36px 28px 60px;
+  min-height: 100%;
+}
+
+.page-head { text-align: center; margin-bottom: 28px; }
+.page-head h1 { font-size: 22px; font-weight: 700; }
+.page-head h1 .b { color: var(--g-blue); } .page-head h1 .r { color: var(--g-red); }
+.page-head h1 .y { color: var(--g-yellow); } .page-head h1 .g { color: var(--g-green); }
+.page-head p { color: var(--ink-2); font-size: 13px; margin-top: 8px; }
+
+/* E 字结构说明：
+   标准大写 E = 左竖 + 上横 + 中横 + 下横
+   用 4 块琉璃砖：
+     砖1（蓝）= 左竖：高 64%，宽 22%
+     砖2（黄）= 上横：靠右上，宽 40%，高 22%
+     砖3（绿）= 中横：靠右中，宽 32%，高 22%
+     砖4（红）= 下横：靠右下，宽 40%，高 22%
+   留 4% 间隙作"砖缝"
+*/
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 22px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.card {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  padding: 26px 16px 16px;
+  box-shadow: var(--raised);
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+}
+.card.featured { border-color: var(--g-blue); box-shadow: var(--raised), 0 0 0 2px var(--g-blue); }
+.card.featured::before {
+  content: "推荐"; position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
+  background: var(--g-blue); color: #fff; font-size: 10px; padding: 1px 10px; border-radius: 8px;
+  box-shadow: var(--raised); font-weight: 600;
+}
+.card .logo-box { width: 100px; height: 100px; display: flex; align-items: center; justify-content: center; position: relative; }
+.card .name { font-weight: 700; font-size: 14px; margin-top: 18px; }
+.card .desc { font-size: 11px; color: var(--ink-2); margin-top: 5px; line-height: 1.5; min-height: 32px; }
+.card .sizes { display: flex; gap: 12px; align-items: flex-end; margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--edge); width: 100%; justify-content: center; }
+.card .sizes .s { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.card .sizes .s span { font-size: 9px; color: var(--ink-3); }
+
+/* 通用琉璃 E 容器 */
+.e-glass {
+  width: 70%; height: 78%;
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.e-glass .tile {
+  position: absolute;
+  border-radius: 4px;
+  box-shadow: var(--glass-shadow);
+}
+/* E 字四块标准比例（基于 100x100 容器）：
+   左竖  x:0   y:0   w:26  h:100  蓝
+   上横  x:26  y:0   w:74  h:26   黄
+   中横  x:26  y:37  w:56  h:26   绿
+   下横  x:26  y:74  w:74  h:26   红
+   砖缝 4px（已含在坐标里）
+*/
+
+/* ===== T1：经典四色琉璃 E（推荐）===== */
+.t1 .v { left: 0;   top: 0;    width: 26%; height: 100%; background: linear-gradient(135deg, var(--g-blue-l), var(--g-blue-d)); }
+.t1 .th{ left: 26%; top: 0;    width: 74%; height: 26%; background: linear-gradient(135deg, var(--g-yellow-l), var(--g-yellow-d)); }
+.t1 .mh{ left: 26%; top: 37%;  width: 56%; height: 26%; background: linear-gradient(135deg, var(--g-green-l), var(--g-green-d)); }
+.t1 .bh{ left: 26%; top: 74%;  width: 74%; height: 26%; background: linear-gradient(135deg, var(--g-red-l), var(--g-red-d)); }
+
+/* ===== T2：圆角更圆的琉璃 E（柔和）===== */
+.e-glass.t2 .tile { border-radius: 10px; }
+
+/* ===== T3：无砖缝（紧贴），更整体 ===== */
+.t3 .v { left: 0;   top: 0;    width: 30%; height: 100%; background: linear-gradient(135deg, var(--g-blue-l), var(--g-blue-d)); border-radius: 6px 0 0 6px; }
+.t3 .th{ left: 30%; top: 0;    width: 70%; height: 30%; background: linear-gradient(135deg, var(--g-yellow-l), var(--g-yellow-d)); border-radius: 0 6px 0 0; }
+.t3 .mh{ left: 30%; top: 35%;  width: 55%; height: 30%; background: linear-gradient(135deg, var(--g-green-l), var(--g-green-d)); }
+.t3 .bh{ left: 30%; top: 70%;  width: 70%; height: 30%; background: linear-gradient(135deg, var(--g-red-l), var(--g-red-d)); border-radius: 0 0 6px 0; }
+
+/* ===== T4：配色重排（蓝主导，更稳）===== */
+.t4 .v { left: 0;   top: 0;    width: 26%; height: 100%; background: linear-gradient(135deg, var(--g-blue-l), var(--g-blue-d)); }
+.t4 .th{ left: 26%; top: 0;    width: 74%; height: 26%; background: linear-gradient(135deg, var(--g-red-l), var(--g-red-d)); }
+.t4 .mh{ left: 26%; top: 37%;  width: 56%; height: 26%; background: linear-gradient(135deg, var(--g-yellow-l), var(--g-yellow-d)); }
+.t4 .bh{ left: 26%; top: 74%;  width: 74%; height: 26%; background: linear-gradient(135deg, var(--g-green-l), var(--g-green-d)); }
+
+/* ===== T5：深色琉璃（高对比，适合深色底）===== */
+.t5 .v { left: 0;   top: 0;    width: 26%; height: 100%; background: linear-gradient(135deg, var(--g-blue), #0d4ea8); }
+.t5 .th{ left: 26%; top: 0;    width: 74%; height: 26%; background: linear-gradient(135deg, var(--g-yellow), #a87800); }
+.t5 .mh{ left: 26%; top: 37%;  width: 56%; height: 26%; background: linear-gradient(135deg, var(--g-green), #1a6630); }
+.t5 .bh{ left: 26%; top: 74%;  width: 74%; height: 26%; background: linear-gradient(135deg, var(--g-red), #962820); }
+
+/* ===== T6：描边琉璃 E（每块砖加白边，像马赛克）===== */
+.t6 .tile { box-shadow: var(--glass-shadow), 0 0 0 2px rgba(255,255,255,.55); }
+.t6 .v { left: 0;   top: 0;    width: 26%; height: 100%; background: linear-gradient(135deg, var(--g-blue-l), var(--g-blue-d)); }
+.t6 .th{ left: 26%; top: 0;    width: 74%; height: 26%; background: linear-gradient(135deg, var(--g-yellow-l), var(--g-yellow-d)); }
+.t6 .mh{ left: 26%; top: 37%;  width: 56%; height: 26%; background: linear-gradient(135deg, var(--g-green-l), var(--g-green-d)); }
+.t6 .bh{ left: 26%; top: 74%;  width: 74%; height: 26%; background: linear-gradient(135deg, var(--g-red-l), var(--g-red-d)); }
+
+/* ===== T7：竖条纹琉璃（每块砖内部有玻璃高光纹）===== */
+.t7 .tile::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  background: repeating-linear-gradient(90deg, transparent 0 3px, rgba(255,255,255,.12) 3px 4px);
+}
+.t7 .v { left: 0;   top: 0;    width: 26%; height: 100%; background: linear-gradient(135deg, var(--g-blue-l), var(--g-blue-d)); }
+.t7 .th{ left: 26%; top: 0;    width: 74%; height: 26%; background: linear-gradient(135deg, var(--g-yellow-l), var(--g-yellow-d)); }
+.t7 .mh{ left: 26%; top: 37%;  width: 56%; height: 26%; background: linear-gradient(135deg, var(--g-green-l), var(--g-green-d)); }
+.t7 .bh{ left: 26%; top: 74%;  width: 74%; height: 26%; background: linear-gradient(135deg, var(--g-red-l), var(--g-red-d)); }
+
+/* ===== 实际尺寸预览 ===== */
+.realuse {
+  max-width: 1100px; margin: 40px auto 0;
+  background: linear-gradient(#fbfaf6, #f1ede3);
+  border: 1px solid var(--edge); border-radius: 12px;
+  padding: 14px 18px; box-shadow: var(--raised);
+}
+.realuse .rh { font-size: 12px; font-weight: 700; color: var(--ink-2); margin-bottom: 10px; }
+.realuse .row { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+.realuse .item { display: flex; align-items: center; gap: 8px; }
+.realuse .item .lbl { font-size: 10px; color: var(--ink-3); }
+.realuse .brand-mini { font-weight: 700; font-size: 14px; }
+.realuse .brand-mini .b { color: var(--g-blue); } .realuse .brand-mini .r { color: var(--g-red); }
+.realuse .brand-mini .y { color: var(--g-yellow); } .realuse .brand-mini .g { color: var(--g-green); }
+
+.darkuse {
+  max-width: 1100px; margin: 20px auto 0;
+  background: #2b2a26; border-radius: 12px;
+  padding: 14px 18px;
+}
+.darkuse .rh { font-size: 12px; font-weight: 700; color: #9a9488; margin-bottom: 10px; }
+.darkuse .row { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+.darkuse .item { display: flex; align-items: center; gap: 8px; }
+.darkuse .item .lbl { font-size: 10px; color: #6b675e; }
+.darkuse .brand-mini { font-weight: 700; font-size: 14px; color: #fbfaf6; }
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>S3 · 琉璃砖 <span class="b">E</span> <span class="r">优</span><span class="y">化</span><span class="g">版</span></h1>
+  <p>4 块琉璃砖精确拼成 E 字（左竖+上横+中横+下横）· 7 个变体</p>
+</div>
+
+<div class="grid">
+
+  <div class="card featured">
+    <div class="logo-box">
+      <div class="e-glass t1">
+        <div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div>
+      </div>
+    </div>
+    <div class="name">T1 · 经典四色琉璃 E（推荐）</div>
+    <div class="desc">蓝竖+黄上横+绿中横+红下横，标准 E 字比例，砖缝清晰。最平衡。</div>
+    <div class="sizes">
+      <div class="s"><div class="e-glass t1" style="width:32px;height:36px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div><span>32</span></div>
+      <div class="s"><div class="e-glass t1" style="width:20px;height:22px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="e-glass t2 t1">
+        <div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div>
+      </div>
+    </div>
+    <div class="name">T2 · 圆角柔和</div>
+    <div class="desc">同 T1 但砖块圆角更大（10px），更圆润可爱，像奶糖。</div>
+    <div class="sizes">
+      <div class="s"><div class="e-glass t2 t1" style="width:32px;height:36px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div><span>32</span></div>
+      <div class="s"><div class="e-glass t2 t1" style="width:20px;height:22px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="e-glass t3">
+        <div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div>
+      </div>
+    </div>
+    <div class="name">T3 · 无缝整体</div>
+    <div class="desc">砖块紧贴无缝隙，外轮廓圆角，像一个整体琉璃 E。更现代。</div>
+    <div class="sizes">
+      <div class="s"><div class="e-glass t3" style="width:32px;height:36px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div><span>32</span></div>
+      <div class="s"><div class="e-glass t3" style="width:20px;height:22px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="e-glass t4">
+        <div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div>
+      </div>
+    </div>
+    <div class="name">T4 · 配色重排</div>
+    <div class="desc">蓝竖+红上+黄中+绿下，红色上移更跳，整体更活泼。</div>
+    <div class="sizes">
+      <div class="s"><div class="e-glass t4" style="width:32px;height:36px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div><span>32</span></div>
+      <div class="s"><div class="e-glass t4" style="width:20px;height:22px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="e-glass t5">
+        <div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div>
+      </div>
+    </div>
+    <div class="name">T5 · 深色高对比</div>
+    <div class="desc">每色用更深饱和度，对比强烈，适合深色底或小尺寸。</div>
+    <div class="sizes">
+      <div class="s"><div class="e-glass t5" style="width:32px;height:36px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div><span>32</span></div>
+      <div class="s"><div class="e-glass t5" style="width:20px;height:22px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="e-glass t6">
+        <div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div>
+      </div>
+    </div>
+    <div class="name">T6 · 描边马赛克</div>
+    <div class="desc">每块砖加白边，像马赛克瓷砖拼图，边界最清晰。</div>
+    <div class="sizes">
+      <div class="s"><div class="e-glass t6" style="width:32px;height:36px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div><span>32</span></div>
+      <div class="s"><div class="e-glass t6" style="width:20px;height:22px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="e-glass t7">
+        <div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div>
+      </div>
+    </div>
+    <div class="name">T7 · 竖纹琉璃</div>
+    <div class="desc">每块砖内部有竖向玻璃高光纹，强化"琉璃"材质感。</div>
+    <div class="sizes">
+      <div class="s"><div class="e-glass t7" style="width:32px;height:36px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div><span>32</span></div>
+      <div class="s"><div class="e-glass t7" style="width:20px;height:22px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+</div>
+
+<div class="realuse">
+  <div class="rh">浅色顶栏实际尺寸对照（30px）</div>
+  <div class="row">
+    <div class="item">
+      <div class="e-glass t1" style="width:24px;height:27px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div>
+      <span class="brand-mini">EM<span class="b">S</span><span class="r">o</span><span class="y">d</span><span class="g">e</span>r</span>
+      <span class="lbl">T1</span>
+    </div>
+    <div class="item">
+      <div class="e-glass t3" style="width:24px;height:27px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">T3</span>
+    </div>
+    <div class="item">
+      <div class="e-glass t5" style="width:24px;height:27px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">T5</span>
+    </div>
+    <div class="item">
+      <div class="e-glass t6" style="width:24px;height:27px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">T6</span>
+    </div>
+  </div>
+</div>
+
+<div class="darkuse">
+  <div class="rh">深色底测试（30px）</div>
+  <div class="row">
+    <div class="item">
+      <div class="e-glass t1" style="width:24px;height:27px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">T1</span>
+    </div>
+    <div class="item">
+      <div class="e-glass t5" style="width:24px;height:27px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">T5</span>
+    </div>
+    <div class="item">
+      <div class="e-glass t6" style="width:24px;height:27px"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">T6</span>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

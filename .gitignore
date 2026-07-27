@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.tmp
+
+# Design mockups (keep in local only)
+design-mockup*.html
+logo-*.html
+
+# pack artifacts
+模型说明.txt
+
+# Secrets / API keys (never commit)
+*.env
+.env.local

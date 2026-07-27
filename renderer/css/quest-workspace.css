@@ -1,0 +1,705 @@
+/**
+ * Quest workspace layout — Qoder Quest–style three columns
+ * Left: My Quests board
+ * Center: conversation + execution stream
+ * Right: plan / steps / changes / tools
+ */
+
+:root {
+  --quest-left: 280px;
+  --quest-right: 320px;
+  --quest-rail: 52px;
+  --quest-resizer: 5px;
+  --quest-left-min: 200px;
+  --quest-left-max: 520px;
+  --quest-right-min: 220px;
+  --quest-right-max: 560px;
+}
+
+/* ========== Full Quest workspace (default shell) ========== */
+#app.quest-shell {
+  --title-height: 40px;
+}
+
+#app.quest-shell .titlebar {
+  background: linear-gradient(180deg, var(--bg-title) 0%, var(--bg-panel) 100%);
+  border-bottom: 1px solid var(--border);
+}
+
+#app.quest-shell .titlebar .brand span::after {
+  content: " Quest";
+  font-weight: 500;
+  color: var(--accent);
+  font-size: 12px;
+  margin-left: 2px;
+}
+
+/* statusbar 跟随 theme.css 拟物底栏，不再写死深蓝 */
+
+/* Main grid: rail | left | resizer | center | resizer | right */
+#app.quest-shell .main {
+  grid-template-columns:
+    var(--quest-rail)
+    var(--quest-left)
+    var(--quest-resizer)
+    minmax(0, 1fr)
+    var(--quest-resizer)
+    var(--quest-right) !important;
+}
+
+#app.quest-shell .main.chat-collapsed,
+#app.quest-shell .main.side-collapsed,
+#app.quest-shell .main.side-collapsed.chat-collapsed {
+  grid-template-columns:
+    var(--quest-rail)
+    var(--quest-left)
+    var(--quest-resizer)
+    minmax(0, 1fr)
+    var(--quest-resizer)
+    var(--quest-right) !important;
+}
+
+/* Column resizers (only visible / active in quest shell) */
+.col-resizer {
+  display: none;
+  position: relative;
+  z-index: 5;
+  width: 100%;
+  min-width: 0;
+  cursor: col-resize;
+  background: transparent;
+  user-select: none;
+  touch-action: none;
+}
+
+#app.quest-shell .col-resizer {
+  display: block;
+}
+
+.col-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--border);
+  transition: background 0.12s, box-shadow 0.12s, width 0.12s;
+}
+
+.col-resizer:hover::after,
+.col-resizer.dragging::after {
+  width: 3px;
+  background: var(--sky-400);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+body.col-resizing {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.col-resizing iframe,
+body.col-resizing .monaco-host,
+body.col-resizing .xterm-host {
+  pointer-events: none !important;
+}
+
+/* Keep quest columns on correct tracks when resizers are present */
+#app.quest-shell .quest-panel {
+  grid-column: 4 !important;
+}
+
+#app.quest-shell .quest-right {
+  grid-column: 6 !important;
+}
+
+#app.quest-shell .main > .chat {
+  grid-column: 4;
+}
+
+/* IDE mode uses same resizer handles (see theme.css for IDE grid placement) */
+
+/* Hide classic IDE center (editor stack) in quest shell — keep mounted for open-file */
+#app.quest-shell .center-col {
+  display: none !important;
+}
+
+/* Side panel becomes Quest board column */
+#app.quest-shell .side {
+  background: var(--bg-side);
+  border-right: 1px solid var(--border);
+  width: auto;
+  min-width: 0;
+}
+
+#app.quest-shell .side-header {
+  height: 42px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+  letter-spacing: 0.06em;
+}
+
+#app.quest-shell .side-header #sideTitle {
+  font-size: 11px;
+  color: var(--text);
+}
+
+/* Activity rail simplified */
+#app.quest-shell .activity {
+  background: var(--bg-activity);
+  border-right: 1px solid var(--border);
+}
+
+#app.quest-shell .act-btn[data-view="explorer"],
+#app.quest-shell .act-btn[data-view="search"],
+#app.quest-shell .act-btn[data-view="sessions"] {
+  /* keep available but quieter */
+  opacity: 0.75;
+}
+
+/* ========== Center = Quest conversation console ========== */
+#app.quest-shell .quest-panel {
+  display: flex !important;
+  grid-column: 3 !important;
+  grid-row: 1 !important;
+  border-left: none;
+  border-right: 1px solid var(--border);
+  background: var(--bg-panel);
+  z-index: 2;
+}
+
+#app.quest-shell .chat {
+  display: none !important;
+}
+
+#app.quest-shell .quest-panel-header {
+  height: 52px;
+  background: linear-gradient(180deg, var(--accent-soft) 0%, transparent 100%);
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+}
+
+#app.quest-shell .quest-panel-header .title {
+  font-size: 15px;
+  max-width: 42vw;
+  color: var(--text);
+}
+
+#app.quest-shell .quest-toolbar {
+  padding: 10px 16px;
+  gap: 8px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+#app.quest-shell .quest-progress {
+  margin: 0;
+  height: 3px;
+  border-radius: 0;
+  background: var(--bg-code);
+}
+
+#app.quest-shell .quest-body {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background: var(--bg-panel);
+}
+
+#app.quest-shell .quest-goal-box {
+  max-height: none;
+  padding: 14px 18px;
+  font-size: 13.5px;
+  color: var(--text);
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+#app.quest-shell .quest-mid {
+  grid-template-columns: 1fr;
+  grid-template-rows: minmax(0, 1fr);
+  border-bottom: none;
+}
+
+/* In quest shell: steps move to right column; center is log only */
+#app.quest-shell .quest-steps {
+  display: none;
+}
+
+#app.quest-shell .quest-log {
+  border-right: none;
+  padding: 16px 18px 24px;
+  background: var(--bg-panel);
+}
+
+#app.quest-shell .quest-log .quest-section-h {
+  display: none;
+}
+
+#app.quest-shell .quest-log .line {
+  font-size: 13px;
+  line-height: 1.55;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  color: var(--text);
+}
+
+#app.quest-shell .quest-log .line.assistant {
+  background: var(--bg-msg-ai);
+  border-color: var(--border-soft);
+  border-left: 3px solid var(--accent);
+  color: var(--text);
+}
+
+#app.quest-shell .quest-log .line.tool {
+  background: var(--bg-msg-tool);
+  border-left: 3px solid var(--warning);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+#app.quest-shell .quest-log .line.delta {
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  font-family: var(--font);
+  white-space: pre-wrap;
+  color: var(--text-secondary);
+}
+
+#app.quest-shell .quest-changes {
+  display: none; /* right rail owns changes */
+}
+
+#app.quest-shell .quest-empty {
+  padding: 48px 24px;
+}
+
+#app.quest-shell .quest-empty h3 {
+  font-size: 20px;
+  margin-bottom: 12px;
+}
+
+/* ========== Right rail: plan + changes + tools ========== */
+.quest-right {
+  display: none;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-side);
+  border-left: 1px solid var(--border);
+  grid-column: 4;
+  grid-row: 1;
+  z-index: 2;
+}
+
+#app.quest-shell .quest-right {
+  display: flex;
+}
+
+.quest-right-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 8px 8px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+}
+
+.quest-right-tabs button {
+  flex: 1;
+  height: 30px;
+  border-radius: 8px 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: transparent;
+}
+
+.quest-right-tabs button:hover {
+  color: var(--accent-strong);
+  background: var(--bg-hover);
+}
+
+.quest-right-tabs button.active {
+  color: var(--accent-strong);
+  background: var(--bg-input);
+  border-color: var(--border);
+  font-weight: 600;
+}
+
+.quest-right-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+}
+
+.quest-right-pane {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 100%;
+}
+
+.quest-right-pane.active {
+  display: flex;
+}
+
+.quest-right .quest-section-h {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 4px 0 6px;
+}
+
+#questRightSteps .quest-step {
+  font-size: 12px;
+}
+
+#questRightChanges .quest-change-row {
+  flex-wrap: wrap;
+}
+
+.quest-right-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.quest-right-tools .btn {
+  width: 100%;
+  justify-content: center;
+  height: 34px;
+}
+
+.quest-right-hint {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.55;
+  padding: 8px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+/* Board polish in left column */
+#app.quest-shell .quest-new {
+  padding: 12px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+#app.quest-shell .quest-new textarea {
+  min-height: 88px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-input);
+}
+
+#app.quest-shell .quest-board {
+  padding: 10px 10px 16px;
+  gap: 14px;
+  background: var(--bg-side);
+}
+
+#app.quest-shell .quest-card {
+  padding: 10px 12px;
+  border-radius: 12px;
+  transition: border-color 0.15s, background 0.15s, transform 0.12s;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+}
+
+#app.quest-shell .quest-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent-border);
+  background: var(--bg-active);
+}
+
+#app.quest-shell .quest-card.active {
+  background: var(--bg-active);
+  border-color: var(--accent);
+}
+
+/* Composer dock at bottom of center (goal follow-up) */
+.quest-composer {
+  display: none;
+  border-top: 1px solid var(--border);
+  padding: 10px 14px;
+  background: var(--bg-panel);
+  gap: 8px;
+  flex-direction: column;
+  flex: 0 0 auto;
+  height: var(--quest-composer-height, 120px);
+  min-height: 88px;
+  box-sizing: border-box;
+}
+
+#app.quest-shell .quest-composer {
+  display: flex;
+}
+
+#app.quest-shell #resizeQuestComposer {
+  display: block;
+}
+
+#app:not(.quest-shell) #resizeQuestComposer {
+  display: none !important;
+}
+
+.quest-composer textarea {
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 40px;
+  max-height: none;
+  resize: none;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  line-height: 1.45;
+}
+
+#app.quest-shell .quest-panel {
+  /* ensure flex column so vertical resizer works */
+}
+
+#app.quest-shell .quest-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.quest-composer textarea:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.quest-composer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* When user switches to IDE (explorer/editor), exit quest-shell visuals via class on app */
+#app:not(.quest-shell) .quest-right {
+  display: none !important;
+}
+
+#app:not(.quest-shell) .quest-composer {
+  display: none !important;
+}
+
+/* IDE mode restore: show center, hide quest panel unless quest-mode */
+#app:not(.quest-shell) .quest-panel {
+  /* keep existing quest.css behavior via .main.quest-mode */
+}
+
+/* Floating mode switch */
+.mode-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+}
+
+.mode-switch button {
+  height: 26px;
+  padding: 0 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+}
+
+.mode-switch button.active {
+  background: var(--bg-active);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+/* Status bar quest hint */
+#sbQuest {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ========== Quest 主题皮肤（白天 / 夜晚）========== */
+[data-theme="light"] #app.quest-shell .titlebar {
+  background: linear-gradient(#fbfaf6, #f1ede3);
+  border-bottom-color: #d8d2c4;
+}
+[data-theme="light"] #app.quest-shell .titlebar .brand {
+  color: #1f1e1a;
+}
+[data-theme="light"] #app.quest-shell .titlebar .brand span::after {
+  color: #0d44a8;
+}
+
+[data-theme="light"] #app.quest-shell .activity {
+  background: #ebe7dd;
+}
+[data-theme="light"] #app.quest-shell .side,
+[data-theme="light"] #app.quest-shell .quest-board {
+  background: #f4f1ea;
+}
+[data-theme="light"] #app.quest-shell .quest-panel,
+[data-theme="light"] #app.quest-shell .quest-log,
+[data-theme="light"] #app.quest-shell .quest-body,
+[data-theme="light"] #app.quest-shell .quest-composer {
+  background: #f4f1ea;
+}
+[data-theme="light"] #app.quest-shell .quest-right {
+  background: #f4f1ea;
+}
+[data-theme="light"] .quest-right-tabs {
+  background: #f1ede3;
+}
+[data-theme="light"] .quest-right-tabs button {
+  color: #4a463c;
+}
+[data-theme="light"] .quest-right-tabs button.active {
+  color: #0d44a8;
+  background: #fbfaf6;
+}
+[data-theme="light"] #app.quest-shell .quest-panel-header {
+  background: linear-gradient(#e8f0fe, #f4f1ea);
+}
+[data-theme="light"] #app.quest-shell .quest-panel-header .title,
+[data-theme="light"] #app.quest-shell .quest-goal-box,
+[data-theme="light"] .quest-empty h3,
+[data-theme="light"] .quest-card .t,
+[data-theme="light"] .quest-step .st {
+  color: #1f1e1a !important;
+}
+[data-theme="light"] #app.quest-shell .quest-toolbar {
+  background: #f1ede3;
+}
+[data-theme="light"] #app.quest-shell .quest-log .line.assistant {
+  background: #e8f0fe;
+  border-color: #d8d2c4;
+  color: #1f1e1a;
+}
+[data-theme="light"] #app.quest-shell .quest-log .line.tool {
+  background: #ebe7dd;
+  color: #4a463c;
+}
+[data-theme="light"] #app.quest-shell .quest-log .line.delta {
+  background: rgba(66, 133, 244, 0.08);
+  color: #4a463c;
+}
+[data-theme="light"] #app.quest-shell .quest-card {
+  background: #fbfaf6;
+  border-color: #d8d2c4;
+}
+[data-theme="light"] #app.quest-shell .quest-card.active {
+  background: #e8f0fe;
+  border-color: #1a73e8;
+}
+[data-theme="light"] .quest-badge {
+  color: #0d44a8;
+  background: rgba(66, 133, 244, 0.12);
+  border-color: rgba(26, 115, 232, 0.35);
+}
+[data-theme="light"] .quest-badge.running {
+  color: #0d44a8;
+}
+[data-theme="light"] .quest-badge.ready {
+  color: #137333;
+  border-color: rgba(19, 115, 51, 0.4);
+}
+[data-theme="light"] .quest-badge.error {
+  color: #c5221f;
+  border-color: rgba(197, 34, 31, 0.4);
+}
+[data-theme="light"] .quest-badge.completed {
+  color: #4a463c;
+}
+[data-theme="light"] .quest-change-row {
+  background: #fbfaf6;
+  color: #4a463c;
+}
+[data-theme="light"] .quest-change-row .path {
+  color: #0d44a8;
+}
+[data-theme="light"] .quest-step {
+  background: #fbfaf6;
+}
+[data-theme="light"] .mode-switch button {
+  color: #4a463c;
+}
+[data-theme="light"] .mode-switch button.active {
+  color: #0d44a8;
+  background: #e8f0fe;
+}
+[data-theme="light"] .quest-right-hint,
+[data-theme="light"] .quest-new-hint,
+[data-theme="light"] .quest-col-title,
+[data-theme="light"] .quest-section-h {
+  color: #6b6558;
+}
+[data-theme="light"] .quest-composer textarea,
+[data-theme="light"] .quest-new textarea,
+[data-theme="light"] .quest-new-row select {
+  background: #fbfaf6;
+  color: #1f1e1a;
+  border-color: #d8d2c4;
+}
+
+/* 夜晚：保持深色拟物，但统一走主题变量 */
+[data-theme="dark"] #app.quest-shell .titlebar {
+  background: linear-gradient(#2e2d28, #1f1e1a);
+}
+[data-theme="dark"] #app.quest-shell .activity {
+  background: #1f1e1a;
+}
+[data-theme="dark"] #app.quest-shell .side,
+[data-theme="dark"] #app.quest-shell .quest-board {
+  background: #15140f;
+}
+[data-theme="dark"] #app.quest-shell .quest-panel,
+[data-theme="dark"] #app.quest-shell .quest-log,
+[data-theme="dark"] #app.quest-shell .quest-body,
+[data-theme="dark"] #app.quest-shell .quest-composer {
+  background: #1f1e1a;
+}
+[data-theme="dark"] #app.quest-shell .quest-right {
+  background: #15140f;
+}
+[data-theme="dark"] .quest-right-tabs {
+  background: #1f1e1a;
+}
+[data-theme="dark"] .quest-right-tabs button.active {
+  background: #2e2d28;
+  color: var(--g-blue-l2);
+}
+[data-theme="dark"] #app.quest-shell .quest-log .line.assistant {
+  background: #1a2845;
+  color: #f4f0e6;
+}
+[data-theme="dark"] #app.quest-shell .quest-card {
+  background: #2e2d28;
+}
+[data-theme="dark"] #app.quest-shell .quest-card.active {
+  background: #1a2845;
+  border-color: var(--g-blue);
+}
+[data-theme="dark"] .quest-badge {
+  color: var(--g-blue-l2);
+}
+[data-theme="dark"] .quest-change-row {
+  background: #2e2d28;
+}
+[data-theme="dark"] .quest-step {
+  background: #2e2d28;
+}

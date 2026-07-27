@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "syncedAt": "2026-07-22T08:24:40.238Z",
+  "count": 88,
+  "sources": [
+    "C:\\Users\\Admin\\.zcode\\skills",
+    "C:\\Users\\Admin\\.agents\\skills"
+  ],
+  "note": "Synced from local zcode/agents skills for EMSoder portable share. No .env / node_modules."
+}

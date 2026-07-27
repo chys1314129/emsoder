@@ -1,0 +1,10 @@
+{
+  "name": "emsoder-skill-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Vendored skill CLIs for EMSoder",
+  "dependencies": {
+    "firecrawl-cli": "^1.19.27",
+    "mmx-cli": "^1.0.18"
+  }
+}

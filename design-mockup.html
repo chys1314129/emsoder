@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>EMSoder 重设计预览 v2 · Google 四色 + 锤子拟物</title>
+<style>
+/* ============================================================
+   EMSoder 重设计 v2
+   - 图标全部重画（线性 + 拟物高光）
+   - Google 四色在皮肤多处体现：
+       蓝主操作/选中/链接
+       红 删除/危险/未读/错误徽章
+       黄 进行中/未保存/警告/思考中
+       绿 成功/在线/自动授权/已提交
+   - 锤子拟物：纸底、凸起按钮、凹陷输入、拟物开关/徽章
+   布局与现版一致
+   ============================================================ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --g-blue:   #4285F4;
+  --g-red:    #EA4335;
+  --g-yellow: #FBBC04;
+  --g-green:  #34A853;
+  --g-blue-d: #1a73e8;
+  --g-blue-l: #e8f0fe;
+  --g-red-l:  #fce8e6;
+  --g-yellow-l:#fef7e0;
+  --g-green-l:#e6f4ea;
+
+  --paper:     #f4f1ea;
+  --paper-2:   #ebe7dd;
+  --card:      #fbfaf6;
+  --card-edge: #d8d2c4;
+  --ink:       #2b2a26;
+  --ink-2:     #6b675e;
+  --ink-3:     #9a9488;
+
+  --raised: 0 1px 0 rgba(255,255,255,.9) inset, 0 -1px 0 rgba(0,0,0,.06) inset, 0 2px 4px rgba(60,50,30,.14), 0 1px 1px rgba(60,50,30,.10);
+  --raised-strong: 0 1px 0 rgba(255,255,255,.95) inset, 0 -2px 0 rgba(0,0,0,.08) inset, 0 4px 10px rgba(60,50,30,.18);
+  --pressed: 0 2px 4px rgba(0,0,0,.18) inset, 0 -1px 0 rgba(255,255,255,.4) inset;
+  --inset-line: 0 1px 2px rgba(0,0,0,.10) inset;
+}
+
+html, body { height: 100%; }
+body {
+  font-family: "PingFang SC", "Helvetica Neue", "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--paper);
+  background-image:
+    radial-gradient(circle at 15% 8%, rgba(66,133,244,.06), transparent 35%),
+    radial-gradient(circle at 85% 92%, rgba(234,67,53,.05), transparent 35%),
+    radial-gradient(circle at 90% 10%, rgba(251,188,4,.04), transparent 30%),
+    radial-gradient(circle at 10% 90%, rgba(52,170,83,.04), transparent 30%);
+  color: var(--ink);
+  font-size: 13px;
+  overflow: hidden;
+}
+
+/* ---------- 顶栏 ---------- */
+.titlebar {
+  height: 46px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 14px;
+  background: linear-gradient(#fbfaf6, #f1ede3);
+  border-bottom: 1px solid var(--card-edge);
+  box-shadow: 0 1px 2px rgba(60,50,30,.08);
+  position: relative; z-index: 10;
+}
+.brand { display: flex; align-items: center; gap: 9px; }
+.logo {
+  width: 30px; height: 30px; border-radius: 8px;
+  /* 四色四瓣，拟物立体 */
+  background:
+    conic-gradient(from 225deg,
+      var(--g-blue) 0 90deg,
+      var(--g-red) 90deg 180deg,
+      var(--g-yellow) 180deg 270deg,
+      var(--g-green) 270deg 360deg);
+  box-shadow: var(--raised-strong), 0 0 0 1px rgba(0,0,0,.12), inset 0 0 0 2px rgba(255,255,255,.25);
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+}
+.logo::after {
+  content: ""; position: absolute;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff, #f0ece2);
+  box-shadow: 0 1px 1px rgba(0,0,0,.2);
+}
+.brand-name { font-weight: 700; letter-spacing: .4px; }
+.brand-name .dot-blue { color: var(--g-blue); }
+.brand-name .dot-red  { color: var(--g-red); }
+.brand-name .dot-yel  { color: var(--g-yellow); }
+.brand-name .dot-grn  { color: var(--g-green); }
+
+.mode-switch {
+  display: flex; gap: 0;
+  background: var(--paper-2);
+  border-radius: 11px; padding: 3px;
+  box-shadow: var(--inset-line);
+}
+.mode-switch button {
+  border: none; background: transparent; cursor: pointer;
+  padding: 5px 16px; border-radius: 8px;
+  font-size: 12px; color: var(--ink-2); font-weight: 500;
+  transition: all .12s;
+}
+.mode-switch button.active {
+  background: linear-gradient(#fff, #f0ece2);
+  color: var(--g-blue);
+  box-shadow: var(--raised);
+  font-weight: 600;
+}
+
+.workspace-path {
+  font-size: 12px; color: var(--ink-3);
+  padding: 5px 10px;
+  background: var(--paper-2);
+  border-radius: 6px;
+  box-shadow: var(--inset-line);
+  max-width: 280px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.spacer { flex: 1; }
+.tb-actions { display: flex; gap: 6px; }
+
+.btn, .tb-btn {
+  border: 1px solid var(--card-edge);
+  background: linear-gradient(#fff, #f0ece2);
+  color: var(--ink);
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 12px; cursor: pointer;
+  box-shadow: var(--raised);
+  transition: all .1s;
+  font-weight: 500;
+}
+.btn:hover, .tb-btn:hover { background: linear-gradient(#fff, #e8e3d6); }
+.btn:active, .tb-btn:active { box-shadow: var(--pressed); transform: translateY(1px); }
+.btn.primary {
+  background: linear-gradient(var(--g-blue), var(--g-blue-d));
+  border-color: var(--g-blue-d);
+  color: #fff;
+  text-shadow: 0 1px 1px rgba(0,0,0,.2);
+  box-shadow: 0 1px 0 rgba(255,255,255,.3) inset, 0 -1px 0 rgba(0,0,0,.15) inset, 0 2px 5px rgba(66,133,244,.4);
+}
+.btn.primary:active { box-shadow: 0 2px 4px rgba(0,0,0,.2) inset; }
+.btn.danger { background: linear-gradient(#fff, #f6e0dd); color: var(--g-red); border-color: #e8c9c5; }
+.btn.success { background: linear-gradient(var(--g-green), #2d8e47); color: #fff; border-color: #2d8e47; text-shadow: 0 1px 1px rgba(0,0,0,.2); }
+.btn.warn { background: linear-gradient(#fff, #faecc1); color: #8a6500; border-color: #ecd99a; }
+
+/* ---------- 主体 ---------- */
+.main {
+  display: grid;
+  grid-template-columns: 54px 280px 1fr 380px;
+  height: calc(100vh - 46px - 28px);
+}
+
+/* 活动栏 - 四色分组高亮 */
+.activity {
+  background: linear-gradient(#f1ede3, #e6e1d4);
+  border-right: 1px solid var(--card-edge);
+  padding: 10px 0;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  box-shadow: 1px 0 2px rgba(60,50,30,.06) inset;
+}
+.act-btn {
+  width: 40px; height: 40px;
+  border: none; background: transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ink-2);
+  transition: all .12s;
+  position: relative;
+}
+.act-btn:hover { background: rgba(66,133,244,.10); }
+/* 每个 act-btn 悬停时显示对应 Google 色 */
+.act-btn[data-c="blue"]:hover  { color: var(--g-blue); }
+.act-btn[data-c="red"]:hover   { color: var(--g-red); }
+.act-btn[data-c="yellow"]:hover{ color: #c79a00; }
+.act-btn[data-c="green"]:hover { color: var(--g-green); }
+.act-btn.active {
+  background: linear-gradient(#fff, #efe9db);
+  box-shadow: var(--raised);
+}
+/* 选中态左侧高亮条用对应颜色 */
+.act-btn.active[data-c="blue"]  { color: var(--g-blue); }
+.act-btn.active[data-c="blue"]::before  { background: var(--g-blue); box-shadow: 0 0 5px rgba(66,133,244,.7); }
+.act-btn.active[data-c="red"]   { color: var(--g-red); }
+.act-btn.active[data-c="red"]::before   { background: var(--g-red); box-shadow: 0 0 5px rgba(234,67,53,.7); }
+.act-btn.active[data-c="yellow"]{ color: #c79a00; }
+.act-btn.active[data-c="yellow"]::before{ background: var(--g-yellow); box-shadow: 0 0 5px rgba(251,188,4,.7); }
+.act-btn.active[data-c="green"] { color: var(--g-green); }
+.act-btn.active[data-c="green"]::before{ background: var(--g-green); box-shadow: 0 0 5px rgba(52,170,83,.7); }
+.act-btn::before {
+  content: ""; position: absolute; left: -9px; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 22px; border-radius: 0 3px 3px 0;
+  background: transparent;
+}
+.act-btn svg { width: 21px; height: 21px; }
+.act-spacer { flex: 1; }
+
+/* 侧栏 */
+.sidebar {
+  background: var(--paper);
+  border-right: 1px solid var(--card-edge);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.side-head {
+  height: 40px; padding: 0 14px;
+  display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--card-edge);
+  background: linear-gradient(#fbfaf6, #f1ede3);
+}
+.side-title { font-weight: 600; font-size: 12px; color: var(--ink-2); letter-spacing: .5px; }
+.side-body { flex: 1; overflow: auto; padding: 8px; }
+
+/* 文件树 - 文件夹按类型用不同 Google 色 */
+.tree-item {
+  display: flex; align-items: center; gap: 7px;
+  padding: 4px 8px; border-radius: 6px;
+  cursor: pointer; font-size: 12px; color: var(--ink);
+}
+.tree-item:hover { background: rgba(66,133,244,.08); }
+.tree-item.active {
+  background: var(--g-blue-l);
+  color: var(--g-blue-d);
+  box-shadow: var(--inset-line);
+}
+.tree-item .ic { width: 16px; text-align: center; font-size: 13px; }
+.tree-item.dim { color: var(--ink-3); }
+.ic-folder { color: var(--g-yellow); }   /* 文件夹黄 */
+.ic-folder-2 { color: #e0a800; }
+.ic-ts { color: var(--g-blue); }          /* TS 蓝 */
+.ic-md { color: var(--g-green); }         /* MD 绿 */
+.ic-json { color: var(--g-red); }         /* JSON 红 */
+.ic-js { color: #e0a800; }                /* JS 黄 */
+
+/* 标签栏 */
+.editor-col { display: flex; flex-direction: column; background: var(--card); }
+.tab-bar {
+  height: 38px; display: flex; align-items: stretch;
+  background: var(--paper-2);
+  border-bottom: 1px solid var(--card-edge);
+  box-shadow: 0 1px 2px rgba(60,50,30,.05);
+}
+.tab {
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 14px; font-size: 12px; cursor: pointer;
+  border-right: 1px solid var(--card-edge);
+  color: var(--ink-2); background: transparent;
+}
+.tab.active {
+  background: var(--card); color: var(--ink);
+  box-shadow: 0 -3px 0 var(--g-blue) inset, 0 1px 0 rgba(255,255,255,.6) inset;
+  font-weight: 600;
+}
+.tab .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--g-yellow); box-shadow: 0 0 0 1px rgba(0,0,0,.12); }
+.tab .x { color: var(--ink-3); margin-left: 4px; padding: 0 3px; border-radius: 3px; }
+.tab .x:hover { background: var(--g-red-l); color: var(--g-red); }
+
+.editor {
+  flex: 1; padding: 14px 18px; font-family: "JetBrains Mono", "Consolas", monospace;
+  font-size: 13px; line-height: 1.7; color: var(--ink);
+  background: var(--card);
+  background-image: linear-gradient(rgba(0,0,0,.025) 1px, transparent 1px);
+  background-size: 100% 23px;
+  overflow: auto; position: relative;
+}
+.editor .ln { color: var(--ink-3); margin-right: 14px; user-select: none; display: inline-block; width: 26px; text-align: right; }
+.editor .kw { color: var(--g-blue); font-weight: 600; }
+.editor .str { color: var(--g-green); }
+.editor .num { color: var(--g-red); }
+.editor .com { color: var(--ink-3); font-style: italic; }
+.editor .fn { color: var(--g-red); }
+.editor .prop { color: #c79a00; }
+.editor .cursor {
+  display: inline-block; width: 2px; height: 16px; background: var(--g-blue);
+  vertical-align: text-bottom; animation: blink 1s steps(2) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* 代码 token 四色高亮说明 */
+.legend {
+  position: absolute; right: 16px; top: 16px;
+  background: var(--card); border: 1px solid var(--card-edge);
+  border-radius: 10px; padding: 8px 10px;
+  box-shadow: var(--raised); font-size: 10px; z-index: 5;
+}
+.legend .row { display: flex; align-items: center; gap: 5px; margin: 2px 0; }
+.legend .sw { width: 10px; height: 10px; border-radius: 3px; box-shadow: 0 0 0 1px rgba(0,0,0,.12); }
+
+/* AI 面板 */
+.ai-panel {
+  background: var(--paper);
+  border-left: 1px solid var(--card-edge);
+  display: flex; flex-direction: column;
+}
+.ai-head {
+  height: 40px; padding: 0 12px;
+  display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--card-edge);
+  background: linear-gradient(#fbfaf6, #f1ede3);
+}
+.ai-head .title { font-weight: 600; font-size: 12px; color: var(--ink-2); display: flex; align-items: center; gap: 6px; }
+.ai-head .title .pulse {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--g-green);
+  box-shadow: 0 0 0 0 rgba(52,170,83,.5); animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(52,170,83,.5); }
+  70% { box-shadow: 0 0 0 6px rgba(52,170,83,0); }
+  100% { box-shadow: 0 0 0 0 rgba(52,170,83,0); }
+}
+.ai-head .model-chip {
+  font-size: 11px; padding: 3px 9px; border-radius: 11px;
+  background: var(--g-blue-l); color: var(--g-blue-d);
+  box-shadow: var(--inset-line);
+  display: flex; align-items: center; gap: 5px;
+}
+.ai-head .model-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--g-blue); }
+
+.ai-messages { flex: 1; overflow: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+
+.msg { display: flex; gap: 8px; }
+.msg .avatar {
+  width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: #fff;
+  text-shadow: 0 1px 1px rgba(0,0,0,.25);
+  box-shadow: var(--raised);
+}
+.msg.user .avatar { background: linear-gradient(var(--g-green), #2d8e47); }
+.msg.ai .avatar {
+  background: conic-gradient(from 225deg, var(--g-blue), var(--g-red), var(--g-yellow), var(--g-green));
+}
+.msg.error .avatar { background: linear-gradient(var(--g-red), #b53024); }
+.msg .bubble {
+  background: var(--card);
+  border: 1px solid var(--card-edge);
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 12px; line-height: 1.6;
+  box-shadow: var(--raised);
+  max-width: 88%;
+}
+.msg.ai .bubble { background: var(--g-blue-l); border-color: #c5dcfb; }
+.msg.user .bubble { background: var(--g-green-l); border-color: #b8dcc4; }
+.msg code { background: rgba(66,133,244,.12); color: var(--g-blue-d); padding: 1px 5px; border-radius: 4px; font-family: "JetBrains Mono", monospace; font-size: 11px; }
+
+/* 工具折叠卡 - 四色按工具类型 */
+.tool-fold {
+  background: var(--paper-2);
+  border: 1px solid var(--card-edge);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 11px; color: var(--ink-2);
+  box-shadow: var(--inset-line);
+  display: flex; align-items: center; gap: 7px;
+}
+.tool-fold .badge {
+  font-size: 10px; padding: 1px 7px; border-radius: 9px;
+  font-weight: 600; color: #fff;
+  text-shadow: 0 1px 1px rgba(0,0,0,.2);
+  box-shadow: 0 1px 0 rgba(255,255,255,.3) inset, 0 1px 1px rgba(0,0,0,.15);
+}
+.tool-fold .badge.read    { background: var(--g-blue); }
+.tool-fold .badge.write   { background: var(--g-green); }
+.tool-fold .badge.run     { background: var(--g-yellow); color: #5a4400; text-shadow: none; }
+.tool-fold .badge.search  { background: var(--g-red); }
+.tool-fold .badge.think   { background: #9a9488; }
+
+/* composer */
+.composer {
+  border-top: 1px solid var(--card-edge);
+  padding: 10px;
+  background: linear-gradient(#fbfaf6, #f1ede3);
+}
+.composer textarea {
+  width: 100%; height: 62px; resize: none;
+  border: 1px solid var(--card-edge);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px; font-family: inherit;
+  background: var(--card);
+  box-shadow: var(--inset-line);
+  color: var(--ink);
+}
+.composer textarea:focus { outline: none; border-color: var(--g-blue); box-shadow: 0 0 0 3px rgba(66,133,244,.18), var(--inset-line); }
+.composer-row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+.composer-left { display: flex; gap: 8px; align-items: center; }
+.composer-right { display: flex; gap: 6px; }
+
+/* 拟物开关 - 三态可用 Google 色 */
+.toggle {
+  width: 42px; height: 24px; border-radius: 13px;
+  background: var(--paper-2);
+  border: 1px solid var(--card-edge);
+  box-shadow: var(--inset-line);
+  position: relative; cursor: pointer;
+  transition: all .2s;
+}
+.toggle .knob {
+  position: absolute; top: 1px; left: 1px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff, #e6e1d4);
+  box-shadow: 0 1px 2px rgba(0,0,0,.3), 0 1px 0 rgba(255,255,255,.8) inset;
+  transition: all .2s;
+}
+.toggle.on { background: linear-gradient(var(--g-green), #2d8e47); border-color: #2d8e47; }
+.toggle.on .knob { left: 21px; }
+.toggle.on.warn { background: linear-gradient(var(--g-yellow), #d9a300); border-color: #d9a300; }
+.toggle.on.danger { background: linear-gradient(var(--g-red), #b53024); border-color: #b53024; }
+
+.auth-toggle {
+  font-size: 11px; padding: 3px 9px; border-radius: 11px;
+  background: var(--paper-2); color: var(--ink-2);
+  box-shadow: var(--inset-line); cursor: pointer;
+  display: flex; align-items: center; gap: 5px;
+}
+.auth-toggle.on { background: var(--g-blue-l); color: var(--g-blue-d); }
+.auth-toggle.on::before { content: "⚡"; }
+
+/* 底部面板 */
+.bottom-panel {
+  height: 28px;
+  display: flex; align-items: stretch; gap: 0;
+  background: linear-gradient(#f1ede3, #e6e1d4);
+  border-top: 1px solid var(--card-edge);
+  padding: 0 10px;
+  font-size: 11px; color: var(--ink-2);
+}
+.bottom-panel .tab {
+  padding: 0 12px; cursor: pointer;
+  border: none; background: transparent; color: var(--ink-2);
+  font-size: 11px; display: flex; align-items: center; gap: 4px;
+  border-right: 1px solid transparent;
+}
+.bottom-panel .tab:hover { color: var(--ink); }
+.bottom-panel .tab.active {
+  background: var(--card); color: var(--ink);
+  box-shadow: 0 -3px 0 var(--g-blue) inset, 1px 0 0 var(--card-edge), -1px 0 0 var(--card-edge);
+  font-weight: 600;
+}
+.bottom-panel .spacer { flex: 1; }
+.bottom-panel .status { display: flex; align-items: center; gap: 5px; padding: 0 8px; }
+.bottom-panel .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--g-green); box-shadow: 0 0 5px rgba(52,170,83,.7); }
+
+/* 拟物徽章 - 四色 */
+.badge-count {
+  background: var(--g-red); color: #fff;
+  font-size: 10px; padding: 1px 6px; border-radius: 10px;
+  box-shadow: 0 1px 0 rgba(255,255,255,.3) inset, 0 1px 1px rgba(0,0,0,.2);
+  font-weight: 600; min-width: 16px; text-align: center;
+}
+.badge-count.warn { background: var(--g-yellow); color: #5a4400; text-shadow: none; }
+.badge-count.ok { background: var(--g-green); }
+
+/* 色板说明卡 */
+.palette-card {
+  position: absolute; right: 16px; bottom: 16px;
+  background: var(--card); border: 1px solid var(--card-edge);
+  border-radius: 10px; padding: 11px 13px;
+  box-shadow: var(--raised-strong);
+  font-size: 11px; z-index: 50;
+  width: 215px;
+}
+.palette-card .pc-title { font-weight: 700; margin-bottom: 7px; color: var(--ink); display: flex; align-items: center; gap: 5px; }
+.palette-card .swatch-row { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+.palette-card .sw { width: 14px; height: 14px; border-radius: 4px; box-shadow: var(--raised), 0 0 0 1px rgba(0,0,0,.1); }
+.palette-card .sw-blue { background: var(--g-blue); }
+.palette-card .sw-red { background: var(--g-red); }
+.palette-card .sw-yellow { background: var(--g-yellow); }
+.palette-card .sw-green { background: var(--g-green); }
+.palette-card .pc-note { margin-top: 7px; color: var(--ink-3); font-size: 10px; line-height: 1.5; border-top: 1px solid var(--card-edge); padding-top: 6px; }
+
+svg { stroke: currentColor; fill: none; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+</style>
+</head>
+<body>
+
+<header class="titlebar">
+  <div class="brand">
+    <div class="logo"></div>
+    <span class="brand-name">EM<span class="dot-blue">S</span><span class="dot-red">o</span><span class="dot-yel">d</span><span class="dot-grn">e</span>r</span>
+  </div>
+  <div class="mode-switch">
+    <button class="active">Quest</button>
+    <button>IDE</button>
+  </div>
+  <div class="workspace-path">D:\zcode的\EMSoder\desktop</div>
+  <div class="spacer"></div>
+  <div class="tb-actions">
+    <button class="tb-btn">打开文件夹</button>
+    <button class="tb-btn">服务商</button>
+    <button class="tb-btn">模型</button>
+    <button class="tb-btn">任务板</button>
+    <button class="tb-btn">面板</button>
+    <button class="tb-btn primary">显示编辑器</button>
+  </div>
+</header>
+
+<div class="main">
+  <!-- 活动栏：图标重画，data-c 标记对应 Google 色 -->
+  <aside class="activity">
+    <!-- 资源管理器：蓝色，文件夹形 -->
+    <button class="act-btn active" data-c="blue" title="资源管理器">
+      <svg viewBox="0 0 24 24"><path d="M3 7l2-3h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 11h18"/></svg>
+    </button>
+    <!-- 搜索：红色，放大镜 -->
+    <button class="act-btn" data-c="red" title="搜索">
+      <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-5-5"/></svg>
+    </button>
+    <!-- Quest 任务板：黄色，三栏看板 -->
+    <button class="act-btn" data-c="yellow" title="Quest 任务板">
+      <svg viewBox="0 0 24 24"><rect x="3" y="5" width="5" height="14" rx="1"/><rect x="10" y="5" width="5" height="9" rx="1"/><rect x="17" y="5" width="4" height="11" rx="1"/></svg>
+    </button>
+    <!-- Git：绿色，分支 -->
+    <button class="act-btn" data-c="green" title="Git">
+      <svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="8" r="2.2"/><path d="M6 8.2v7.6M8 6h6a4 4 0 0 1 4 4v0"/></svg>
+    </button>
+    <!-- 会话：蓝色，对话气泡 -->
+    <button class="act-btn" data-c="blue" title="会话">
+      <svg viewBox="0 0 24 24"><path d="M4 5h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-5 4V7a2 2 0 0 1 2-2z"/><path d="M8 10h8M8 13h5"/></svg>
+    </button>
+    <!-- 技能：红色，五角星 -->
+    <button class="act-btn" data-c="red" title="技能管理">
+      <svg viewBox="0 0 24 24"><path d="M12 3l2.6 6.3 6.8.5-5.2 4.4 1.7 6.6L12 17.7 6.1 21.3l1.7-6.6L2.6 9.8l6.8-.5z"/></svg>
+    </button>
+    <!-- 长期记忆：黄色，脑+齿轮 -->
+    <button class="act-btn" data-c="yellow" title="长期记忆">
+      <svg viewBox="0 0 24 24"><path d="M9 3a3 3 0 0 0-3 3 3 3 0 0 0-1 5.8A3 3 0 0 0 8 18a3 3 0 0 0 4 1 3 3 0 0 0 4-1 3 3 0 0 0 3-6.2A3 3 0 0 0 18 6a3 3 0 0 0-3-3 3 3 0 0 0-3 1 3 3 0 0 0-3-1z"/><circle cx="9.5" cy="11" r="1"/><circle cx="14.5" cy="11" r="1"/></svg>
+    </button>
+    <!-- 设置：绿色，齿轮 -->
+    <button class="act-btn" data-c="green" title="设置">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg>
+    </button>
+    <div class="act-spacer"></div>
+    <!-- 账号：蓝色，人形 -->
+    <button class="act-btn" data-c="blue" title="账号">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+    </button>
+  </aside>
+
+  <!-- 侧栏：资源管理器 -->
+  <aside class="sidebar">
+    <div class="side-head">
+      <span class="side-title">资源管理器</span>
+      <button class="btn" style="padding:2px 9px;font-size:11px">+ 新建</button>
+    </div>
+    <div class="side-body">
+      <div class="tree-item"><span class="ic ic-folder">📁</span> desktop</div>
+      <div class="tree-item"><span class="ic ic-folder-2">📁</span> src</div>
+      <div class="tree-item dim" style="padding-left:24px"><span class="ic ic-folder">📁</span> agent</div>
+      <div class="tree-item active" style="padding-left:42px"><span class="ic ic-js">📄</span> memory.js</div>
+      <div class="tree-item" style="padding-left:42px"><span class="ic ic-js">📄</span> runner.js</div>
+      <div class="tree-item dim" style="padding-left:42px"><span class="ic ic-js">📄</span> session.js</div>
+      <div class="tree-item" style="padding-left:24px"><span class="ic ic-folder-2">📁</span> tools</div>
+      <div class="tree-item" style="padding-left:42px"><span class="ic ic-js">📄</span> executor.js</div>
+      <div class="tree-item" style="padding-left:42px"><span class="ic ic-js">📄</span> skills.js</div>
+      <div class="tree-item" style="padding-left:24px"><span class="ic ic-folder-2">📁</span> main</div>
+      <div class="tree-item" style="padding-left:24px"><span class="ic ic-folder-2">📁</span> core</div>
+      <div class="tree-item"><span class="ic ic-folder-2">📁</span> renderer</div>
+      <div class="tree-item"><span class="ic ic-folder-2">📁</span> scripts</div>
+      <div class="tree-item"><span class="ic ic-json">📄</span> package.json</div>
+      <div class="tree-item"><span class="ic ic-md">📄</span> README.md</div>
+      <div class="tree-item"><span class="ic ic-md">📄</span> GAPS.md</div>
+    </div>
+  </aside>
+
+  <!-- 编辑器 -->
+  <main class="editor-col">
+    <div class="tab-bar">
+      <div class="tab active"><span class="ic ic-js" style="font-size:11px">JS</span> memory.js <span class="dot"></span> <span class="x">✕</span></div>
+      <div class="tab"><span class="ic ic-js" style="font-size:11px">JS</span> runner.js <span class="x">✕</span></div>
+      <div class="tab"><span class="ic ic-js" style="font-size:11px">JS</span> executor.js <span class="x">✕</span></div>
+    </div>
+    <div class="editor">
+<pre style="font-family:inherit;margin:0"><span class="ln"> 1</span><span class="com">// 长期记忆存储 - 按当前消息召回，不全部注入</span>
+<span class="ln"> 2</span><span class="kw">const</span> fs = <span class="fn">require</span>(<span class="str">"fs"</span>);
+<span class="ln"> 3</span><span class="kw">const</span> { randomUUID } = <span class="fn">require</span>(<span class="str">"crypto"</span>);
+<span class="ln"> 4</span><span class="kw">const</span> { memoriesPath } = <span class="fn">require</span>(<span class="str">"../core/config"</span>);
+<span class="ln"> 5</span>
+<span class="ln"> 6</span><span class="kw">class</span> <span class="fn">MemoryStore</span> {
+<span class="ln"> 7</span>  <span class="fn">constructor</span>(cfg = {}) {
+<span class="ln"> 8</span>    <span class="kw">this</span>.<span class="prop">memories</span> = [];
+<span class="ln"> 9</span>    <span class="kw">this</span>.<span class="prop">_maxCount</span> = <span class="num">500</span>;
+<span class="ln">10</span>    <span class="kw">this</span>.<span class="fn">load</span>();<span class="cursor"></span>
+<span class="ln">11</span>  }
+<span class="ln">12</span>
+<span class="ln">13</span>  <span class="fn">search</span>(query, { topK = <span class="num">5</span> } = {}) {
+<span class="ln">14</span>    <span class="kw">const</span> tokens = <span class="kw">this</span>.<span class="fn">_tokenize</span>(query);
+<span class="ln">15</span>    <span class="kw">if</span> (!tokens.length) <span class="kw">return</span> [];
+<span class="ln">16</span>    <span class="com">// tag 命中 +2，content 命中 +1，importance 加权</span>
+<span class="ln">17</span>    <span class="kw">return</span> <span class="kw">this</span>.memories
+<span class="ln">18</span>      .<span class="fn">map</span>(m => ({ m, score: <span class="kw">this</span>.<span class="fn">_score</span>(m, tokens) }))
+<span class="ln">19</span>      .<span class="fn">filter</span>(x => x.score > <span class="num">0</span>)
+<span class="ln">20</span>      .<span class="fn">sort</span>((a, b) => b.score - a.score)
+<span class="ln">21</span>      .<span class="fn">slice</span>(<span class="num">0</span>, topK).<span class="fn">map</span>(x => x.m);
+<span class="ln">22</span>  }
+<span class="ln">23</span>}</pre>
+
+      <!-- 代码 token 四色图例 -->
+      <div class="legend">
+        <div style="font-weight:700;margin-bottom:3px">代码高亮</div>
+        <div class="row"><span class="sw" style="background:var(--g-blue)"></span> 关键字/属性</div>
+        <div class="row"><span class="sw" style="background:var(--g-green)"></span> 字符串</div>
+        <div class="row"><span class="sw" style="background:var(--g-red)"></span> 数字/函数名</div>
+        <div class="row"><span class="sw" style="background:var(--g-yellow)"></span> 属性/变量</div>
+      </div>
+
+      <!-- 色板说明卡 -->
+      <div class="palette-card">
+        <div class="pc-title">🎨 Google 四色 · 全皮肤体现</div>
+        <div class="swatch-row"><span class="sw sw-blue"></span> 蓝 #4285F4 · 选中/链接/读工具/TS</div>
+        <div class="swatch-row"><span class="sw sw-red"></span> 红 #EA4335 · 删除/错误/搜索/技能</div>
+        <div class="swatch-row"><span class="sw sw-yellow"></span> 黄 #FBBC04 · 进行中/警告/记忆/JS</div>
+        <div class="swatch-row"><span class="sw sw-green"></span> 绿 #34A853 · 成功/在线/Git/MD</div>
+        <div class="pc-note">活动栏图标按功能映射四色；文件夹黄、文件按类型上色；工具徽章按读/写/跑/搜分色；开关绿=授权、黄=警告、红=危险。</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- AI 面板 -->
+  <aside class="ai-panel">
+    <div class="ai-head">
+      <span class="title"><span class="pulse"></span> AI 助手</span>
+      <span class="model-chip">deepseek-chat</span>
+    </div>
+    <div class="ai-messages">
+      <div class="msg user">
+        <div class="avatar">我</div>
+        <div class="bubble">帮我看下 memory.js 的 search 打分对不对，顺便看有没有噪音问题</div>
+      </div>
+      <div class="tool-fold">
+        <span class="badge read">读</span> read_file · memory.js
+      </div>
+      <div class="tool-fold">
+        <span class="badge search">搜</span> search_text · "tokenize"
+      </div>
+      <div class="msg ai">
+        <div class="avatar"></div>
+        <div class="bubble">打分逻辑没问题：tag 精确命中 <code>+2</code>，content 包含 token <code>+1</code>，最后乘 <code>0.5 + importance/10</code> 加权。一处建议：CJK 单字分词会把"的、了、是"也当 token，召回噪音偏多。</div>
+      </div>
+      <div class="tool-fold">
+        <span class="badge think">思</span> 正在思考…
+      </div>
+      <div class="msg ai">
+        <div class="avatar"></div>
+        <div class="bubble">要降噪可以过滤高频虚词，或对中文做 2-gram。要我改一版吗？</div>
+      </div>
+    </div>
+    <div class="composer">
+      <textarea placeholder="问点什么…  @引用文件  Shift+Enter 换行"></textarea>
+      <div class="composer-row">
+        <div class="composer-left">
+          <div class="auth-toggle on">自动授权</div>
+          <div class="toggle on"><div class="knob"></div></div>
+        </div>
+        <div class="composer-right">
+          <button class="btn danger">停止</button>
+          <button class="btn primary">发送</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- 底部状态栏 -->
+<div class="bottom-panel">
+  <button class="tab active">终端</button>
+  <button class="tab">Git</button>
+  <button class="tab">调试</button>
+  <button class="tab">问题 <span class="badge-count">2</span></button>
+  <button class="tab">规则</button>
+  <div class="spacer"></div>
+  <span class="status"><span class="status-dot"></span> deepseek-chat · 就绪</span>
+</div>
+
+</body>
+</html>

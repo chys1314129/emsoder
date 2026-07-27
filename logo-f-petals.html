@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>EMSoder Logo · F 花瓣深化</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --g-blue:   #4285F4;
+  --g-red:    #EA4335;
+  --g-yellow: #FBBC04;
+  --g-green:  #34A853;
+  --g-blue-d: #1a73e8;
+  --paper:    #f4f1ea;
+  --card:     #fbfaf6;
+  --edge:     #d8d2c4;
+  --ink:      #2b2a26;
+  --ink-2:    #6b675e;
+  --ink-3:    #9a9488;
+  --raised: 0 1px 0 rgba(255,255,255,.9) inset, 0 -1px 0 rgba(0,0,0,.06) inset, 0 2px 5px rgba(60,50,30,.16), 0 1px 1px rgba(60,50,30,.10);
+  --raised-strong: 0 1px 0 rgba(255,255,255,.95) inset, 0 -2px 0 rgba(0,0,0,.08) inset, 0 4px 12px rgba(60,50,30,.2);
+}
+
+html, body { height: 100%; }
+body {
+  font-family: "PingFang SC", "Helvetica Neue", "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--paper);
+  background-image:
+    radial-gradient(circle at 15% 8%, rgba(66,133,244,.06), transparent 35%),
+    radial-gradient(circle at 85% 92%, rgba(234,67,53,.05), transparent 35%),
+    radial-gradient(circle at 90% 10%, rgba(251,188,4,.04), transparent 30%),
+    radial-gradient(circle at 10% 90%, rgba(52,170,83,.04), transparent 30%);
+  color: var(--ink);
+  padding: 36px 28px 60px;
+  min-height: 100%;
+}
+
+.page-head { text-align: center; margin-bottom: 32px; }
+.page-head h1 { font-size: 22px; font-weight: 700; letter-spacing: .5px; }
+.page-head h1 .b { color: var(--g-blue); } .page-head h1 .r { color: var(--g-red); }
+.page-head h1 .y { color: var(--g-yellow); } .page-head h1 .g { color: var(--g-green); }
+.page-head p { color: var(--ink-2); font-size: 13px; margin-top: 8px; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 22px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  padding: 26px 16px 16px;
+  box-shadow: var(--raised);
+  display: flex; flex-direction: column; align-items: center;
+  text-align: center;
+}
+.card.featured { border-color: var(--g-blue); box-shadow: var(--raised), 0 0 0 2px var(--g-blue); }
+.card.featured::before { content: "推荐"; position: absolute; transform: translateY(-30px); background: var(--g-blue); color: #fff; font-size: 10px; padding: 1px 8px; border-radius: 8px; box-shadow: var(--raised); font-weight: 600; }
+.card { position: relative; }
+.card .logo-box { width: 96px; height: 96px; display: flex; align-items: center; justify-content: center; position: relative; }
+.card .name { font-weight: 700; font-size: 14px; margin-top: 18px; }
+.card .desc { font-size: 11px; color: var(--ink-2); margin-top: 5px; line-height: 1.5; min-height: 32px; }
+.card .sizes { display: flex; gap: 12px; align-items: flex-end; margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--edge); width: 100%; justify-content: center; }
+.card .sizes .s { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.card .sizes .s span { font-size: 9px; color: var(--ink-3); }
+
+/* 通用花瓣容器 */
+.petal-logo { width: 100%; height: 100%; position: relative; display: flex; align-items: center; justify-content: center; }
+.petal-logo .petal {
+  position: absolute; width: 42%; height: 64%;
+  border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+  top: 14%;
+  box-shadow: 0 2px 4px rgba(0,0,0,.22), 0 1px 0 rgba(255,255,255,.45) inset, 0 -1px 1px rgba(0,0,0,.12) inset;
+}
+
+/* F1：经典四瓣，中心白圆 + E 字（推荐） */
+.f1 .p1 { background: var(--g-blue);   left: 29%; transform: rotate(-40deg); }
+.f1 .p2 { background: var(--g-red);    left: 29%; transform: rotate(40deg); }
+.f1 .p3 { background: var(--g-yellow); left: 29%; transform: rotate(120deg); }
+.f1 .p4 { background: var(--g-green);  left: 29%; transform: rotate(200deg); }
+.f1 .core {
+  position: absolute; width: 38%; height: 38%; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff, #f0ece2);
+  box-shadow: 0 1px 2px rgba(0,0,0,.25), 0 0 0 1px rgba(0,0,0,.08);
+  z-index: 5;
+  display: flex; align-items: center; justify-content: center;
+  font-family: Georgia, serif; font-weight: 800; font-size: 60%;
+  color: var(--ink); text-shadow: 0 1px 0 rgba(255,255,255,.6);
+}
+.f1 .core::after { content: "E"; }
+
+/* F2：八瓣双层（外四色 + 内四色淡） */
+.f2 .p1 { background: var(--g-blue);   left: 29%; transform: rotate(-40deg); width: 46%; height: 70%; }
+.f2 .p2 { background: var(--g-red);    left: 29%; transform: rotate(40deg); width: 46%; height: 70%; }
+.f2 .p3 { background: var(--g-yellow); left: 29%; transform: rotate(120deg); width: 46%; height: 70%; }
+.f2 .p4 { background: var(--g-green);  left: 29%; transform: rotate(200deg); width: 46%; height: 70%; }
+.f2 .q1 { background: rgba(66,133,244,.5);  left: 33%; transform: rotate(0deg);   width: 34%; height: 50%; top: 25%; }
+.f2 .q2 { background: rgba(234,67,53,.5);   left: 33%; transform: rotate(80deg);  width: 34%; height: 50%; top: 25%; }
+.f2 .q3 { background: rgba(251,188,4,.5);   left: 33%; transform: rotate(160deg); width: 34%; height: 50%; top: 25%; }
+.f2 .q4 { background: rgba(52,170,83,.5);   left: 33%; transform: rotate(240deg); width: 34%; height: 50%; top: 25%; }
+.f2 .core {
+  position: absolute; width: 30%; height: 30%; border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 1px 2px rgba(0,0,0,.2), 0 0 0 1px var(--edge);
+  z-index: 5;
+}
+
+/* F3：水滴形花瓣（尖端朝外） */
+.f3 .petal {
+  border-radius: 50% 50% 50% 50% / 70% 70% 30% 30%;
+  width: 38%; height: 56%; top: 22%;
+}
+.f3 .p1 { background: var(--g-blue);   left: 31%; transform: rotate(-40deg); }
+.f3 .p2 { background: var(--g-red);    left: 31%; transform: rotate(40deg); }
+.f3 .p3 { background: var(--g-yellow); left: 31%; transform: rotate(120deg); }
+.f3 .p4 { background: var(--g-green);  left: 31%; transform: rotate(200deg); }
+.f3 .core {
+  position: absolute; width: 34%; height: 34%; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff, #f0ece2);
+  box-shadow: 0 1px 2px rgba(0,0,0,.25), 0 0 0 1px rgba(0,0,0,.08);
+  z-index: 5;
+  font-family: Georgia, serif; font-weight: 800; font-size: 56%;
+  color: var(--ink); display: flex; align-items: center; justify-content: center;
+}
+.f3 .core::after { content: "E"; }
+
+/* F4：四瓣错位叠层（带透明，像 Google Maps pin） */
+.f4 .petal {
+  width: 44%; height: 66%; top: 14%;
+  border-radius: 50% 50% 50% 50% / 55% 55% 45% 45%;
+  opacity: .92;
+}
+.f4 .p1 { background: var(--g-blue);   left: 28%; transform: rotate(-35deg); }
+.f4 .p2 { background: var(--g-red);    left: 30%; transform: rotate(35deg); }
+.f4 .p3 { background: var(--g-yellow); left: 28%; transform: rotate(125deg); }
+.f4 .p4 { background: var(--g-green);  left: 30%; transform: rotate(195deg); }
+.f4 .core {
+  position: absolute; width: 36%; height: 36%; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff, #f0ece2);
+  box-shadow: 0 1px 2px rgba(0,0,0,.3), 0 0 0 1px rgba(0,0,0,.1);
+  z-index: 5;
+  display: flex; align-items: center; justify-content: center;
+  font-family: "JetBrains Mono", monospace; font-weight: 700; font-size: 38%;
+  color: var(--g-blue-d);
+}
+.f4 .core::after { content: "</>"; font-size: 13px; }
+
+/* F5：四瓣 + 中心不放字，留纯色芯 */
+.f5 .p1 { background: var(--g-blue);   left: 29%; transform: rotate(-40deg); width: 44%; height: 66%; }
+.f5 .p2 { background: var(--g-red);    left: 29%; transform: rotate(40deg); width: 44%; height: 66%; }
+.f5 .p3 { background: var(--g-yellow); left: 29%; transform: rotate(120deg); width: 44%; height: 66%; }
+.f5 .p4 { background: var(--g-green);  left: 29%; transform: rotate(200deg); width: 44%; height: 66%; }
+.f5 .core {
+  position: absolute; width: 28%; height: 28%; border-radius: 50%;
+  background: conic-gradient(var(--g-blue), var(--g-red), var(--g-yellow), var(--g-green), var(--g-blue));
+  box-shadow: 0 1px 2px rgba(0,0,0,.3), 0 0 0 2px var(--card), 0 0 0 3px rgba(0,0,0,.1);
+  z-index: 5;
+}
+
+/* F6：四瓣外圈 + 内圈反向旋转（动感） */
+.f6 .p1 { background: var(--g-blue);   left: 26%; transform: rotate(-30deg); width: 48%; height: 70%; }
+.f6 .p2 { background: var(--g-red);    left: 26%; transform: rotate(60deg); width: 48%; height: 70%; }
+.f6 .p3 { background: var(--g-yellow); left: 26%; transform: rotate(150deg); width: 48%; height: 70%; }
+.f6 .p4 { background: var(--g-green);  left: 26%; transform: rotate(240deg); width: 48%; height: 70%; }
+.f6 .q1 { background: rgba(66,133,244,.6);  left: 34%; transform: rotate(40deg);  width: 32%; height: 48%; top: 26%; }
+.f6 .q2 { background: rgba(234,67,53,.6);   left: 34%; transform: rotate(130deg); width: 32%; height: 48%; top: 26%; }
+.f6 .q3 { background: rgba(251,188,4,.6);   left: 34%; transform: rotate(220deg); width: 32%; height: 48%; top: 26%; }
+.f6 .q4 { background: rgba(52,170,83,.6);   left: 34%; transform: rotate(310deg); width: 32%; height: 48%; top: 26%; }
+.f6 .core {
+  position: absolute; width: 26%; height: 26%; border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 1px 2px rgba(0,0,0,.2), 0 0 0 1px var(--edge);
+  z-index: 5;
+  display: flex; align-items: center; justify-content: center;
+  font-family: Georgia, serif; font-weight: 800; font-size: 50%; color: var(--ink);
+}
+.f6 .core::after { content: "E"; }
+
+/* ====== 顶栏实际尺寸预览 ====== */
+.realuse {
+  max-width: 1100px; margin: 40px auto 0;
+  background: linear-gradient(#fbfaf6, #f1ede3);
+  border: 1px solid var(--edge); border-radius: 12px;
+  padding: 14px 18px; box-shadow: var(--raised);
+}
+.realuse .rh { font-size: 12px; font-weight: 700; color: var(--ink-2); margin-bottom: 10px; }
+.realuse .row { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+.realuse .item { display: flex; align-items: center; gap: 8px; }
+.realuse .item .lbl { font-size: 10px; color: var(--ink-3); }
+.realuse .brand-mini { font-weight: 700; font-size: 14px; }
+.realuse .brand-mini .b { color: var(--g-blue); } .realuse .brand-mini .r { color: var(--g-red); }
+.realuse .brand-mini .y { color: var(--g-yellow); } .realuse .brand-mini .g { color: var(--g-green); }
+
+/* 深色底测试 */
+.darkuse {
+  max-width: 1100px; margin: 20px auto 0;
+  background: #2b2a26; border-radius: 12px;
+  padding: 14px 18px;
+}
+.darkuse .rh { font-size: 12px; font-weight: 700; color: #9a9488; margin-bottom: 10px; }
+.darkuse .row { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+.darkuse .item { display: flex; align-items: center; gap: 8px; }
+.darkuse .item .lbl { font-size: 10px; color: #6b675e; }
+.darkuse .brand-mini { font-weight: 700; font-size: 14px; color: #fbfaf6; }
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>F · 四色花瓣 <span class="b">深</span><span class="r">化</span><span class="y">方</span><span class="g">案</span></h1>
+  <p>6 个变体 · 中心/形状/层次各不同 · 底部有深色底测试</p>
+</div>
+
+<div class="grid">
+
+  <div class="card featured">
+    <div class="logo-box">
+      <div class="petal-logo f1">
+        <div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div>
+        <div class="core"></div>
+      </div>
+    </div>
+    <div class="name">F1 · 经典四瓣 + E 芯</div>
+    <div class="desc">四瓣对称展开，中心白圆衬 E 字。最平衡、缩到 20px 仍清晰。</div>
+    <div class="sizes">
+      <div class="s"><div class="petal-logo f1" style="width:32px;height:32px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="core"></div></div><span>32</span></div>
+      <div class="s"><div class="petal-logo f1" style="width:20px;height:20px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="core"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="petal-logo f2">
+        <div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div>
+        <div class="petal q1"></div><div class="petal q2"></div><div class="petal q3"></div><div class="petal q4"></div>
+        <div class="core"></div>
+      </div>
+    </div>
+    <div class="name">F2 · 八瓣双层</div>
+    <div class="desc">外层四色大瓣 + 内层四色淡瓣，中心白圆。更丰富，但缩小后层次会糊。</div>
+    <div class="sizes">
+      <div class="s"><div class="petal-logo f2" style="width:32px;height:32px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="petal q1"></div><div class="petal q2"></div><div class="petal q3"></div><div class="petal q4"></div><div class="core"></div></div><span>32</span></div>
+      <div class="s"><div class="petal-logo f2" style="width:20px;height:20px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="petal q1"></div><div class="petal q2"></div><div class="petal q3"></div><div class="petal q4"></div><div class="core"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="petal-logo f3">
+        <div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div>
+        <div class="core"></div>
+      </div>
+    </div>
+    <div class="name">F3 · 水滴瓣 + E 芯</div>
+    <div class="desc">花瓣改成水滴形（尖朝外），更锐利有方向感。中心 E 字。</div>
+    <div class="sizes">
+      <div class="s"><div class="petal-logo f3" style="width:32px;height:32px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="core"></div></div><span>32</span></div>
+      <div class="s"><div class="petal-logo f3" style="width:20px;height:20px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="core"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="petal-logo f4">
+        <div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div>
+        <div class="core"></div>
+      </div>
+    </div>
+    <div class="name">F4 · 错位叠层 + 代码芯</div>
+    <div class="desc">四瓣错位半透明叠放，中心放 <code>&lt;/&gt;</code>。最强"编程"暗示。</div>
+    <div class="sizes">
+      <div class="s"><div class="petal-logo f4" style="width:32px;height:32px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="core"></div></div><span>32</span></div>
+      <div class="s"><div class="petal-logo f4" style="width:20px;height:20px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="core"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="petal-logo f5">
+        <div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div>
+        <div class="core"></div>
+      </div>
+    </div>
+    <div class="name">F5 · 纯色芯（无字）</div>
+    <div class="desc">中心不放字母，用四色锥形渐变小圆，靠花辨本身识别。最简洁。</div>
+    <div class="sizes">
+      <div class="s"><div class="petal-logo f5" style="width:32px;height:32px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="core"></div></div><span>32</span></div>
+      <div class="s"><div class="petal-logo f5" style="width:20px;height:20px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="core"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="petal-logo f6">
+        <div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div>
+        <div class="petal q1"></div><div class="petal q2"></div><div class="petal q3"></div><div class="petal q4"></div>
+        <div class="core"></div>
+      </div>
+    </div>
+    <div class="name">F6 · 双层反向旋转</div>
+    <div class="desc">外四瓣顺时针 + 内四瓣逆时针，像风车。最有动感，缩小后偏糊。</div>
+    <div class="sizes">
+      <div class="s"><div class="petal-logo f6" style="width:32px;height:32px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="petal q1"></div><div class="petal q2"></div><div class="petal q3"></div><div class="petal q4"></div><div class="core"></div></div><span>32</span></div>
+      <div class="s"><div class="petal-logo f6" style="width:20px;height:20px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="petal q1"></div><div class="petal q2"></div><div class="petal q3"></div><div class="petal q4"></div><div class="core"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+</div>
+
+<div class="realuse">
+  <div class="rh">浅色顶栏实际尺寸对照（30px）</div>
+  <div class="row">
+    <div class="item">
+      <div class="petal-logo f1" style="width:30px;height:30px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="core"></div></div>
+      <span class="brand-mini">EM<span class="b">S</span><span class="r">o</span><span class="y">d</span><span class="g">e</span>r</span>
+      <span class="lbl">F1</span>
+    </div>
+    <div class="item">
+      <div class="petal-logo f3" style="width:30px;height:30px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="core"></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">F3</span>
+    </div>
+    <div class="item">
+      <div class="petal-logo f4" style="width:30px;height:30px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="core"></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">F4</span>
+    </div>
+    <div class="item">
+      <div class="petal-logo f5" style="width:30px;height:30px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="core"></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">F5</span>
+    </div>
+  </div>
+</div>
+
+<div class="darkuse">
+  <div class="rh">深色底测试（30px）</div>
+  <div class="row">
+    <div class="item">
+      <div class="petal-logo f1" style="width:30px;height:30px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="core"></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">F1</span>
+    </div>
+    <div class="item">
+      <div class="petal-logo f3" style="width:30px;height:30px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="core"></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">F3</span>
+    </div>
+    <div class="item">
+      <div class="petal-logo f5" style="width:30px;height:30px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div><div class="core"></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">F5</span>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

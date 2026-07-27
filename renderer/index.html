@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self' file: blob: data:; style-src 'self' 'unsafe-inline' file: blob:; script-src 'self' 'unsafe-eval' 'unsafe-inline' file: blob:; worker-src 'self' blob: file:; img-src 'self' data: blob:;"
+  />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EMSoder</title>
+  <link rel="stylesheet" href="css/theme.css" />
+  <link rel="stylesheet" href="css/panels.css" />
+  <link rel="stylesheet" href="css/quest.css" />
+  <link rel="stylesheet" href="css/quest-workspace.css" />
+</head>
+<body data-theme="dark">
+  <div id="app">
+    <header class="titlebar">
+      <div class="brand">
+        <div class="logo"><div class="e-tiles"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div>
+        <span class="brand-name">EM<span class="dot-blue">S</span><span class="dot-red">o</span><span class="dot-yel">d</span><span class="dot-grn">e</span>r</span>
+      </div>
+      <div class="mode-switch" title="切换 Quest / IDE">
+        <button type="button" data-mode="quest">Quest</button>
+        <button type="button" data-mode="ide" class="active">IDE</button>
+      </div>
+      <div class="workspace-path" id="workspacePath">未打开工作区</div>
+      <div class="spacer"></div>
+      <div class="tb-actions">
+        <button class="tb-btn" id="btnOpenFolder">打开文件夹</button>
+        <button class="tb-btn" id="btnProviders">服务商</button>
+        <button class="tb-btn" id="btnSelectModel">模型</button>
+        <button class="tb-btn" id="btnOpenQuest" title="Ctrl+Shift+Q">任务板</button>
+        <button class="tb-btn" id="btnToggleBottom">面板</button>
+        <button class="tb-btn" id="btnToggleChat" title="显示/隐藏中间 Chat">Chat</button>
+        <button class="tb-btn primary" id="btnToggleEditor" title="显示/隐藏右侧编辑器">显示编辑器</button>
+        <button class="tb-btn theme-toggle" id="btnThemeToggle" title="切换白天/夜晚">
+          <svg class="icon-sun" viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="4.5" stroke="currentColor" fill="none" stroke-width="1.9"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.5 4.5l1.8 1.8M17.7 17.7l1.8 1.8M19.5 4.5l-1.8 1.8M6.3 17.7l-1.8 1.8" stroke="currentColor" fill="none" stroke-width="1.9" stroke-linecap="round"/></svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" width="16" height="16"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" stroke="currentColor" fill="none" stroke-width="1.9" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="main editor-collapsed" id="mainLayout">
+      <aside class="activity">
+        <!-- 会话置顶 -->
+        <button class="act-btn active" data-view="sessions" title="会话">
+          <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        </button>
+        <button class="act-btn" data-view="explorer" title="资源管理器">
+          <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+        </button>
+        <button class="act-btn" data-view="search" title="搜索">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        </button>
+        <button class="act-btn" data-view="quest" id="actQuest" title="Quest 任务板">
+          <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="18" cy="18" r="3"/></svg>
+          <span class="quest-dot"></span>
+        </button>
+        <button class="act-btn" data-view="git" title="Git">
+          <svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M6 8v4a4 4 0 0 0 4 4h2"/><path d="M18 8v2a4 4 0 0 1-4 4h-2"/></svg>
+        </button>
+        <button class="act-btn" data-view="skills" title="技能管理">
+          <svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4h7.8l-6.3 4.6 2.4 7.4L12 17.2l-6.3 4.6 2.4-7.4-6.3-4.6h7.8z"/></svg>
+        </button>
+        <button class="act-btn" data-view="memory" title="长期记忆">
+          <svg viewBox="0 0 24 24"><path d="M9.5 2a4.5 4.5 0 0 0-4.5 4.5c0 .9.3 1.8.7 2.5A4.5 4.5 0 0 0 3 13c0 1.5.7 2.8 1.8 3.6A4.5 4.5 0 0 0 9.5 22a4.5 4.5 0 0 0 3.5-1.7A4.5 4.5 0 0 0 16.5 22a4.5 4.5 0 0 0 4.7-5.4A4.5 4.5 0 0 0 23 13c0-1.5-.7-2.8-1.8-3.6A4.5 4.5 0 0 0 18 4.5C18 2.6 16.4 1 14.5 1c-1.9 0-3.5 1.6-3.5 3.5V8"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>
+        </button>
+        <button class="act-btn" data-view="settings" title="设置">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.6.9 1 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        </button>
+        <div class="act-spacer"></div>
+        <button class="act-btn" id="actAccount" title="免费 · 无 Credits · Quest">
+          <svg viewBox="0 0 24 24"><path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5z"/><path d="M3 21a9 9 0 0 1 18 0"/></svg>
+        </button>
+      </aside>
+
+      <section class="side" id="sidePanel">
+        <div class="side-header">
+          <span id="sideTitle">会话</span>
+          <button class="icon-btn" id="btnRefreshTree" title="刷新">↻</button>
+        </div>
+        <div id="sideBody" class="file-tree">
+          <div class="tree-empty">打开一个文件夹开始编码。<br/>Ctrl+O</div>
+        </div>
+      </section>
+
+      <div
+        class="col-resizer"
+        id="resizeLeft"
+        data-resize="left"
+        title="拖动调整左栏宽度"
+      ></div>
+
+      <section class="center-col" id="centerCol">
+        <div class="editor-area">
+          <div class="tabs" id="tabs"></div>
+          <div class="editor-toolbar">
+            <button class="tb-mini" id="btnAddSelection" title="选区加入对话">＋选区</button>
+            <button class="tb-mini" id="btnExplain" title="解释选区">解释</button>
+            <button class="tb-mini" id="btnInlineEdit" title="Inline Edit">Inline Edit</button>
+            <span class="grow"></span>
+            <button class="tb-mini" id="btnToggleEditor2" title="显示/隐藏右侧编辑器">隐藏编辑器</button>
+            <span class="editor-lang" id="editorLang">—</span>
+          </div>
+          <div class="editor-wrap">
+            <div id="monacoEditor" class="monaco-host hidden"></div>
+            <div class="editor-empty" id="editorEmpty">
+              <h1>EMSoder</h1>
+              <p>Qoder 风格 · Monaco 编辑器 · 终端 · Git · 天蓝色<br/>免费 · 无账号 · 自定义第三方模型</p>
+              <div class="hint-keys">
+                <kbd>Ctrl+O</kbd><span>打开文件夹</span>
+                <kbd>Ctrl+`</kbd><span>终端</span>
+                <kbd>Ctrl+Shift+L</kbd><span>AI</span>
+                <kbd>Ctrl+I</kbd><span>Inline Edit</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div
+          class="row-resizer"
+          id="resizeBottom"
+          data-resize="bottom"
+          title="拖动调整底部面板高度"
+        ></div>
+
+        <div class="bottom-panel" id="bottomPanel">
+          <div class="bottom-bar">
+            <button class="bottom-tab active" data-tab="terminal">终端</button>
+            <button class="bottom-tab" data-tab="git">Git</button>
+            <button class="bottom-tab" data-tab="debug">调试</button>
+            <button class="bottom-tab" data-tab="problems">问题 <span id="problemsBadge" class="tab-badge hidden">0</span></button>
+            <button class="bottom-tab" data-tab="rules">规则</button>
+            <div class="grow"></div>
+            <button class="icon-btn" id="btnToggleBottom2" title="折叠">▾</button>
+          </div>
+          <div class="bottom-body">
+            <div class="bottom-pane" data-pane="terminal">
+              <div class="term-toolbar">
+                <button class="tb-mini" id="btnTermNew">新建</button>
+                <button class="tb-mini" id="btnTermKill">Kill</button>
+                <button class="tb-mini" id="btnTermClear">清屏</button>
+                <span class="term-hint">真 PTY · PowerShell/bash · 可交互</span>
+              </div>
+              <div id="xtermHost" class="xterm-host"></div>
+            </div>
+            <div class="bottom-pane hidden" data-pane="git">
+              <div class="git-layout">
+                <div class="git-left">
+                  <div class="git-head">
+                    <span id="gitBranch">—</span>
+                    <button class="tb-mini" id="btnGitRefresh">刷新</button>
+                  </div>
+                  <div id="gitFileList" class="git-files"></div>
+                  <div class="git-commit-box">
+                    <textarea id="gitCommitMsg" rows="2" placeholder="Commit message…"></textarea>
+                    <div class="git-commit-actions">
+                      <button class="btn" id="btnGenCommit">AI 生成</button>
+                      <button class="btn primary" id="btnGitCommit">提交</button>
+                    </div>
+                  </div>
+                </div>
+                <pre id="gitDiff" class="git-diff"></pre>
+              </div>
+            </div>
+            <div class="bottom-pane hidden" data-pane="debug">
+              <div class="debug-layout">
+                <div class="debug-left">
+                  <div class="debug-toolbar">
+                    <button class="tb-mini primary" id="btnDebugStart" title="启动调试当前 JS 文件">启动</button>
+                    <button class="tb-mini" id="btnDebugContinue">继续</button>
+                    <button class="tb-mini" id="btnDebugPause">暂停</button>
+                    <button class="tb-mini" id="btnDebugStepOver">步过</button>
+                    <button class="tb-mini" id="btnDebugStepInto">步入</button>
+                    <button class="tb-mini" id="btnDebugStepOut">步出</button>
+                    <button class="tb-mini" id="btnDebugStop">停止</button>
+                  </div>
+                  <div class="field" style="padding:8px;margin:0;">
+                    <label>程序（相对工作区或绝对路径）</label>
+                    <input id="debugProgram" placeholder="例如 src/index.js" />
+                  </div>
+                  <div class="field" style="padding:0 8px 8px;margin:0;">
+                    <label>参数（空格分隔）</label>
+                    <input id="debugArgs" placeholder="--port 3000" />
+                  </div>
+                  <div class="debug-section-title">断点</div>
+                  <div id="debugBreakpoints" class="debug-list"></div>
+                  <div class="debug-section-title">调用栈</div>
+                  <div id="debugStack" class="debug-list"></div>
+                  <div class="debug-eval-row">
+                    <input id="debugEval" placeholder="在当前帧求值表达式…" />
+                    <button class="tb-mini" id="btnDebugEval">求值</button>
+                  </div>
+                </div>
+                <pre id="debugConsole" class="debug-console"></pre>
+              </div>
+            </div>
+            <div class="bottom-pane hidden" data-pane="problems">
+              <div class="problems-toolbar">
+                <span id="problemsSummary">暂无问题</span>
+                <button class="tb-mini" id="btnReindexLsp" title="重新索引工作区 TS/JS">重新索引</button>
+              </div>
+              <div id="problemsList" class="problems-list">
+                <div class="panel-empty">打开 TS/JS 文件后，Monaco 语言服务会显示诊断。<br/>F12 跳转定义 · Shift+F12 查找引用</div>
+              </div>
+            </div>
+            <div class="bottom-pane hidden" data-pane="rules">
+              <div id="rulesList" class="rules-list">
+                <div class="panel-empty">项目规则会注入 Agent 系统提示（AGENTS.md 等）</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Quest center console (conversation + execution) -->
+      <aside class="quest-panel" id="questPanel">
+        <div class="quest-panel-header">
+          <div style="min-width:0">
+            <div class="title" id="questTitle">Quest</div>
+            <div class="sub" id="questMeta">定目标 · 审结果 · 免费自定义模型</div>
+          </div>
+          <span class="quest-badge" id="questStatus">—</span>
+          <div class="grow"></div>
+          <button class="icon-btn" id="btnQuestRefresh" title="刷新">↻</button>
+          <button class="icon-btn" id="btnQuestClosePanel" title="切到 IDE">✕</button>
+        </div>
+        <div class="quest-toolbar">
+          <button class="btn primary" id="btnQuestStart">▶ 启动</button>
+          <button class="btn" id="btnQuestStop" disabled>■ 停止</button>
+          <button class="btn" id="btnQuestDone" disabled>✓ 标记完成</button>
+          <span class="grow"></span>
+          <button class="tb-mini" id="btnQuestOpenTerm">终端</button>
+          <button class="tb-mini" id="btnQuestOpenGit">Git</button>
+        </div>
+        <div class="quest-progress"><i id="questProgressBar"></i></div>
+        <div class="quest-empty" id="questEmpty">
+          <h3>Define the goal. Review the result.</h3>
+          <div>
+            在左侧 <b>My Quests</b> 描述目标并「创建并运行」。<br/>
+            中间看执行过程 · 右侧看计划与 Changes。<br/>
+            支持 Agent / Experts · 你的第三方模型 · 无 Credits。
+          </div>
+        </div>
+        <div class="quest-body hidden" id="questBody">
+          <div class="quest-goal-box" id="questGoal"></div>
+          <div class="quest-mid">
+            <div class="quest-steps" id="questSteps"></div>
+            <div class="quest-log" id="questLog"></div>
+          </div>
+          <div class="quest-changes" id="questChanges"></div>
+        </div>
+        <div
+          class="row-resizer"
+          id="resizeQuestComposer"
+          data-resize="quest-composer"
+          title="拖动调整 Quest 底部输入区高度"
+        ></div>
+        <div class="quest-composer" id="questComposer">
+          <textarea id="questFollowInput" placeholder="补充说明（可选，写入当前任务备注；主要仍用左侧创建新任务）"></textarea>
+          <div class="quest-composer-row">
+            <span style="font-size:11px;color:var(--text-muted)">Enter 不发送 · 用左侧「创建并运行」提交新目标</span>
+            <button class="btn primary" id="btnQuestStart2">启动当前任务</button>
+          </div>
+        </div>
+      </aside>
+
+      <div
+        class="col-resizer"
+        id="resizeRight"
+        data-resize="right"
+        title="拖动调整右栏宽度"
+      ></div>
+
+      <!-- Quest right rail -->
+      <aside class="quest-right" id="questRight">
+        <div class="quest-right-tabs">
+          <button type="button" data-rtab="plan" class="active">计划</button>
+          <button type="button" data-rtab="changes">Changes</button>
+          <button type="button" data-rtab="tools">工具</button>
+        </div>
+        <div class="quest-right-body">
+          <div class="quest-right-pane active" data-rpane="plan" id="questRightSteps"></div>
+          <div class="quest-right-pane" data-rpane="changes" id="questRightChanges"></div>
+          <div class="quest-right-pane" data-rpane="tools">
+            <div class="quest-right-tools">
+              <div class="quest-section-h">快捷操作</div>
+              <button class="btn" id="btnQuestOpenFolder">打开工作区文件夹</button>
+              <button class="btn" id="btnQuestToIde">切换到 IDE 写代码</button>
+              <button class="btn" id="btnSelectModel2">切换模型</button>
+              <button class="btn" id="btnProviders2">管理服务商</button>
+              <div class="quest-right-hint">
+                <b>操作习惯（对齐 Qoder Quest）</b><br/>
+                1. 左：任务列表 / 新建目标<br/>
+                2. 中：看 Agent 怎么做<br/>
+                3. 右：计划步骤 + 文件变更审阅<br/>
+                4. 顶栏可切回「IDE」编辑文件
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <aside class="chat" id="chatPanel">
+        <div class="chat-header">
+          <div>
+            <div class="title">AI 助手</div>
+            <div class="sub">Agent · 免费通道</div>
+          </div>
+          <div class="grow"></div>
+          <button class="chip" id="modelChip" title="切换模型">model</button>
+          <button class="btn primary btn-new-chat" id="btnNewChat" type="button" title="新建会话">＋ 新会话</button>
+          <button class="icon-btn" id="btnStop" title="停止" disabled>■</button>
+          <button class="btn" id="btnShowEditorFromChat" type="button" title="显示右侧编辑器">编辑器</button>
+        </div>
+        <div class="chat-toolbar">
+          <div class="seg" id="modeSeg">
+            <button data-mode="agent" class="active">Agent</button>
+            <button data-mode="ask">Ask</button>
+          </div>
+          <button class="btn" id="btnClearChat">清空</button>
+          <button
+            class="btn"
+            id="btnToggleChatToc"
+            type="button"
+            title="显示/隐藏对话目录"
+            aria-pressed="true"
+          >目录</button>
+        </div>
+        <div class="chat-body" id="chatBody">
+          <aside class="chat-toc" id="chatToc" aria-label="对话目录">
+            <div class="chat-toc-head">
+              <span class="chat-toc-title">目录</span>
+              <span class="chat-toc-count" id="chatTocCount">0</span>
+            </div>
+            <div class="chat-toc-list" id="chatTocList">
+              <div class="chat-toc-empty">暂无消息</div>
+            </div>
+          </aside>
+          <div class="messages" id="messages">
+            <div class="welcome">
+              <div class="logo-lg"><div class="e-tiles"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div>
+              <h2>今天想写点什么？</h2>
+              <div>Agent 可读写文件、搜索、跑命令、看 Git。<br/>支持项目规则 AGENTS.md · 选区入聊 · Inline Edit</div>
+              <div class="free-badge">FREE · NO CREDITS · BYOK</div>
+            </div>
+          </div>
+        </div>
+        <!-- 本轮 Agent 写盘摘要 + 一键撤销（对齐 Quest Changes） -->
+        <div class="chat-changes" id="chatChanges" hidden>
+          <div class="chat-changes-head">
+            <span class="chat-changes-title">本轮改动</span>
+            <span class="chat-changes-count" id="chatChangesCount">0</span>
+            <div class="grow"></div>
+            <button type="button" class="tb-mini" id="btnRejectAllChanges" title="回滚本轮全部文件到写前">
+              全部撤销
+            </button>
+          </div>
+          <div class="chat-changes-list" id="chatChangesList"></div>
+        </div>
+        <div
+          class="row-resizer"
+          id="resizeChatComposer"
+          data-resize="chat-composer"
+          title="拖动调整 Chat 输入区高度"
+        ></div>
+        <div class="composer" id="chatComposer">
+          <div class="run-indicator" id="runIndicator" hidden>
+            <span class="run-spinner" aria-hidden="true"></span>
+            <span class="run-text" id="runIndicatorText">任务进行中…</span>
+            <span class="run-pulse" id="runPulse">●</span>
+          </div>
+          <div class="attach-chips" id="attachChips" hidden></div>
+          <textarea
+            id="input"
+            placeholder="对话… Enter 发送，Shift+Enter 换行 · 输入 @ 可引用工作区文件 · 可添加附件"
+          ></textarea>
+          <div class="composer-row">
+            <div class="composer-left">
+              <span id="statusText" class="status-idle">就绪</span>
+              <button
+                type="button"
+                class="btn auth-toggle"
+                id="btnAutoApprove"
+                title="开：读写文件/安全命令自动执行，仅高危险命令仍询问。关：多数操作每次询问。"
+                aria-pressed="false"
+              >
+                自动授权 · 关
+              </button>
+              <button class="btn" id="btnAttach" type="button" title="添加文件附件">
+                ＋附件
+              </button>
+              <button class="btn" id="btnAddSelection2" type="button" title="把编辑器选区加入输入">
+                ＋选区
+              </button>
+            </div>
+            <div class="composer-right">
+              <button class="btn" id="btnStop2" type="button" title="停止生成" disabled>■ 停止</button>
+              <button class="btn primary" id="btnSend" type="button">发送</button>
+            </div>
+          </div>
+          <!-- @-mention file picker -->
+          <div class="mention-popup" id="mentionPopup" hidden>
+            <div class="mention-list" id="mentionList"></div>
+            <div class="mention-help">↑↓ 选择 · Enter 引用 · Esc 关闭 · 继续输入筛选</div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <footer class="statusbar">
+      <span class="item free">FREE</span>
+      <span class="item clickable" id="sbQuest" title="Quest 状态">Quest</span>
+      <span class="item clickable" id="sbModel">model</span>
+      <span class="item" id="sbMode">Agent</span>
+      <span
+        class="item clickable"
+        id="sbContext"
+        title="上下文窗口占用（已用 / 容量）"
+      >ctx —</span>
+      <span
+        class="item clickable"
+        id="sbCache"
+        title="平均缓存命中率（API 返回或本地前缀复用估算）"
+      >cache —</span>
+      <span class="item grow" id="sbStatus">就绪</span>
+      <span class="item clickable" id="sbProblems" title="打开问题面板">0 问题</span>
+      <span class="item" id="sbBranch">git</span>
+      <span class="item" id="sbFile">—</span>
+      <span class="item">UTF-8</span>
+      <span class="item">Quest UI</span>
+    </footer>
+  </div>
+
+  <!-- Providers modal -->
+  <div class="modal-backdrop" id="modalProviders">
+    <div class="modal">
+      <header>
+        <h3>模型服务商（全部免费接入）</h3>
+        <button class="icon-btn" data-close="modalProviders">✕</button>
+      </header>
+      <div class="body">
+        <div class="list" id="providerList"></div>
+        <div style="height:12px"></div>
+        <button class="btn primary" id="btnAddProvider">＋ 添加服务商</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalEditProvider">
+    <div class="modal">
+      <header>
+        <h3 id="editProviderTitle">编辑服务商</h3>
+        <button class="icon-btn" data-close="modalEditProvider">✕</button>
+      </header>
+      <div class="body">
+        <div class="field">
+          <label>快速预设（第三方模型）</label>
+          <select id="pfPreset">
+            <option value="">— 手动填写 —</option>
+            <option value="ollama">Ollama 本机免费</option>
+            <option value="lmstudio">LM Studio 本机</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="siliconflow">SiliconFlow 硅基流动</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="moonshot">Moonshot / Kimi</option>
+            <option value="dashscope">通义 DashScope 兼容</option>
+            <option value="openai">OpenAI 官方</option>
+            <option value="anthropic">Anthropic Claude</option>
+            <option value="vllm">vLLM / 自建</option>
+            <option value="custom">Custom 网关</option>
+          </select>
+        </div>
+        <div class="field"><label>ID</label><input id="pfId" placeholder="唯一 id，如 deepseek" /></div>
+        <div class="field"><label>名称</label><input id="pfName" placeholder="显示名" /></div>
+        <div class="field">
+          <label>类型</label>
+          <select id="pfType">
+            <option value="openai">OpenAI 兼容（绝大多数第三方）</option>
+            <option value="anthropic">Anthropic</option>
+          </select>
+        </div>
+        <div class="field"><label>Base URL</label><input id="pfBaseUrl" placeholder="https://api.xxx.com/v1" /></div>
+        <div class="field"><label>API Key</label><input id="pfApiKey" type="password" placeholder="sk-... 本地 Ollama 可填 ollama" /></div>
+        <div class="field"><label>模型列表（逗号分隔）</label><input id="pfModels" placeholder="model-a,model-b" /></div>
+        <div class="field">
+          <label>启用</label>
+          <select id="pfEnabled">
+            <option value="true">启用</option>
+            <option value="false">禁用</option>
+          </select>
+        </div>
+        <div class="field" style="font-size:11px;color:var(--text-muted);line-height:1.45">
+          IDE Chat / Quest / 补全共用这些服务商。保存后可在顶栏「模型」或 Quest 新建任务里切换。
+        </div>
+      </div>
+      <div class="footer">
+        <button class="btn" data-close="modalEditProvider">取消</button>
+        <button class="btn" id="btnTestProvider">测试</button>
+        <button class="btn primary" id="btnSaveProvider">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalModels">
+    <div class="modal">
+      <header>
+        <h3>选择模型</h3>
+        <button class="icon-btn" data-close="modalModels">✕</button>
+      </header>
+      <div class="body"><div class="list" id="modelList"></div></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalSettings">
+    <div class="modal">
+      <header>
+        <h3>设置</h3>
+        <button class="icon-btn" data-close="modalSettings">✕</button>
+      </header>
+      <div class="body">
+        <div class="field">
+          <label>Agent 模式</label>
+          <select id="stAgentMode">
+            <option value="true">开启</option>
+            <option value="false">关闭（Ask）</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>终端执行（Agent 工具）</label>
+          <select id="stTerminal">
+            <option value="askEveryTime">每次询问</option>
+            <option value="autoSafe">安全命令自动</option>
+            <option value="autoAll">全部自动</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>完全自动（含危险命令）</label>
+          <select id="stAutoTools">
+            <option value="false">否（推荐）</option>
+            <option value="true">是 — 连危险终端也跳过确认</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>自识别授权运行</label>
+          <select id="stAutoApproveSafe">
+            <option value="false">关（每次确认）</option>
+            <option value="true">开（读写文件+安全命令自动，仅危险命令仍问）</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>折叠工具 / 思考过程</label>
+          <select id="stCollapseProcess">
+            <option value="true">默认折叠（只展开最终回答）</option>
+            <option value="false">全部展开</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>行内补全（NES 简化）</label>
+          <select id="stCompletion">
+            <option value="true">开启</option>
+            <option value="false">关闭</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>回复语言</label>
+          <select id="stLang">
+            <option value="zh-cn">简体中文</option>
+            <option value="en">English</option>
+            <option value="auto">跟随用户</option>
+          </select>
+        </div>
+        <div class="field"><label>Max Tokens</label><input id="stMaxTokens" type="number" /></div>
+        <div class="field"><label>Temperature</label><input id="stTemp" type="number" step="0.1" /></div>
+        <div class="field" title="单次对话内模型↔工具循环次数；过小会中途停住">
+          <label>Agent 工具轮次上限</label>
+          <input id="stAgentMaxRounds" type="number" min="4" max="80" />
+        </div>
+        <div class="field" title="触达上限或模型提前收口时自动续跑次数，0=关">
+          <label>Agent 自动续跑次数</label>
+          <input id="stAgentAutoContinue" type="number" min="0" max="5" />
+        </div>
+        <div class="field"><label>编辑器字号</label><input id="stFont" type="number" /></div>
+        <div class="field"><label>额外系统提示</label><textarea id="stSystem" rows="3"></textarea></div>
+        <div class="field"><label>命令黑名单</label><input id="stDeny" /></div>
+        <div class="field">
+          <label>Skills（本机 zcode / agents）</label>
+          <select id="stSkillsEnabled">
+            <option value="true">开启</option>
+            <option value="false">关闭</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>扫描 zcode 插件缓存里的技能</label>
+          <select id="stSkillsPlugins">
+            <option value="true">开启</option>
+            <option value="false">关闭</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>已发现技能</label>
+          <div id="stSkillsList" class="list" style="max-height:160px;overflow:auto;font-size:12px"></div>
+          <button type="button" class="btn" id="btnRefreshSkills" style="margin-top:6px">刷新技能列表</button>
+        </div>
+        <div class="field">
+          <label>长期记忆（自动提取事实/偏好，按当前消息召回）</label>
+          <select id="stMemoriesEnabled">
+            <option value="false">关闭（推荐先关）</option>
+            <option value="true">开启</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>记忆最大条数（超出按重要性+新旧淘汰）</label>
+          <input type="number" id="stMemoriesMaxCount" min="50" max="5000" step="50" value="500" style="width:120px">
+        </div>
+      </div>
+      <div class="footer" style="flex-wrap:wrap;gap:8px">
+        <button class="btn" id="btnExportConfig" title="导出配置（API Key 脱敏）">导出配置</button>
+        <button class="btn" id="btnImportConfig" title="从 JSON 导入配置">导入配置</button>
+        <span style="flex:1"></span>
+        <button class="btn" data-close="modalSettings">取消</button>
+        <button class="btn primary" id="btnSaveSettings">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalPalette">
+    <div class="modal palette-modal">
+      <header>
+        <h3>命令面板</h3>
+        <button class="icon-btn" data-close="modalPalette">✕</button>
+      </header>
+      <div class="body" style="padding-top:8px">
+        <div class="field" style="margin-bottom:8px">
+          <input id="paletteInput" placeholder="输入命令… 例如 模型 / Quest / 终端" autocomplete="off" />
+        </div>
+        <div class="list" id="paletteList" style="max-height:360px;overflow:auto"></div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Ctrl+Shift+P 打开 · ↑↓ 选择 · Enter 执行</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalInline">
+    <div class="modal">
+      <header>
+        <h3>Inline Edit</h3>
+        <button class="icon-btn" data-close="modalInline">✕</button>
+      </header>
+      <div class="body">
+        <div class="field">
+          <label>描述你想怎么改（优先选区，否则整文件）</label>
+          <textarea id="inlineInstruction" rows="5" placeholder="例如：加错误处理；改成 async/await"></textarea>
+        </div>
+      </div>
+      <div class="footer">
+        <button class="btn" data-close="modalInline">取消</button>
+        <button class="btn primary" id="btnRunInline">执行</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalFileDiff">
+    <div class="modal modal-file-diff">
+      <header>
+        <h3 id="diffModalTitle">写盘对比</h3>
+        <button class="icon-btn" data-close="modalFileDiff">✕</button>
+      </header>
+      <div class="body">
+        <div class="diff-meta" id="diffModalMeta"></div>
+        <pre class="diff-pre" id="diffModalBody"></pre>
+      </div>
+      <div class="footer">
+        <button class="btn" data-close="modalFileDiff">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalSkillInstall">
+    <div class="modal skill-install-modal">
+      <header>
+        <h3>安装技能</h3>
+        <button class="icon-btn" data-close="modalSkillInstall">✕</button>
+      </header>
+      <div class="body">
+        <p class="skill-install-hint">
+          通过 <code>npx skills add</code> 安装到本机（默认全局 <code>-g</code>，写入 ~/.agents/skills 等目录）。
+          仅允许 <code>owner/repo</code> 格式，需本机已装 Node.js / npx。
+        </p>
+        <div class="field">
+          <label>快捷预设</label>
+          <div class="skill-install-presets" id="skillInstallPresets"></div>
+        </div>
+        <div class="field">
+          <label>仓库 owner/repo（可附 #branch）</label>
+          <input
+            id="skillInstallRepo"
+            type="text"
+            placeholder="例如 firecrawl/cli 或 mattpocock/skills"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <div class="field">
+          <label>仅安装某个技能名（可选，对应 --skill）</label>
+          <input
+            id="skillInstallSkill"
+            type="text"
+            placeholder="留空则按 CLI 默认（常为全部）"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <div class="field skill-install-global-row">
+          <label class="chk">
+            <input type="checkbox" id="skillInstallGlobal" checked />
+            全局安装（-g）
+          </label>
+        </div>
+        <div class="field">
+          <label>安装日志</label>
+          <pre class="skill-install-log" id="skillInstallLog" aria-live="polite"></pre>
+        </div>
+      </div>
+      <div class="footer" style="flex-wrap:wrap;gap:8px">
+        <button class="btn" id="btnSkillInstallCancel" disabled>取消安装</button>
+        <span style="flex:1"></span>
+        <button class="btn" data-close="modalSkillInstall">关闭</button>
+        <button class="btn primary" id="btnSkillInstallRun">开始安装</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Styled async confirm dialog (replaces native confirm()) -->
+  <div class="modal-backdrop" id="modalConfirm">
+    <div class="modal" style="max-width:400px">
+      <div class="modal-header"><span class="modal-title">确认操作</span></div>
+      <div class="modal-body">
+        <p id="modalConfirmMsg" style="margin:0;white-space:pre-wrap;word-break:break-word"></p>
+      </div>
+      <div class="modal-footer" style="gap:8px">
+        <button class="btn" id="modalConfirmCancel">取消</button>
+        <button class="btn primary" id="modalConfirmOk">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="confirm-bar" id="confirmBar">
+    <div class="msg" id="confirmMsg"></div>
+    <div class="actions">
+      <button class="btn" id="confirmDeny">拒绝</button>
+      <button class="btn primary" id="confirmAllow">允许</button>
+    </div>
+  </div>
+
+  <script src="js/dom-util.js"></script>
+  <script src="js/resize-columns.js"></script>
+  <script src="js/monaco-setup.js"></script>
+  <script src="js/lsp-host.js"></script>
+  <script src="js/editor-host.js"></script>
+  <script src="js/panels.js"></script>
+  <script src="js/quest.js"></script>
+  <script src="js/chat-virtual.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

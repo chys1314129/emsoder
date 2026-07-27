@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>EMSoder Logo · 拟物方向</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --g-blue:   #4285F4;
+  --g-red:    #EA4335;
+  --g-yellow: #FBBC04;
+  --g-green:  #34A853;
+  --g-blue-d: #1a73e8;
+  --paper:    #f4f1ea;
+  --card:     #fbfaf6;
+  --edge:     #d8d2c4;
+  --ink:      #2b2a26;
+  --ink-2:    #6b675e;
+  --ink-3:    #9a9488;
+  --raised: 0 1px 0 rgba(255,255,255,.9) inset, 0 -1px 0 rgba(0,0,0,.06) inset, 0 2px 5px rgba(60,50,30,.16), 0 1px 1px rgba(60,50,30,.10);
+  --raised-strong: 0 1px 0 rgba(255,255,255,.95) inset, 0 -2px 0 rgba(0,0,0,.08) inset, 0 4px 12px rgba(60,50,30,.2);
+}
+
+html, body { height: 100%; }
+body {
+  font-family: "PingFang SC", "Helvetica Neue", "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--paper);
+  background-image:
+    radial-gradient(circle at 15% 8%, rgba(66,133,244,.06), transparent 35%),
+    radial-gradient(circle at 85% 92%, rgba(234,67,53,.05), transparent 35%);
+  color: var(--ink);
+  padding: 36px 28px 60px;
+  min-height: 100%;
+}
+
+.page-head { text-align: center; margin-bottom: 32px; }
+.page-head h1 { font-size: 22px; font-weight: 700; }
+.page-head h1 .b { color: var(--g-blue); } .page-head h1 .r { color: var(--g-red); }
+.page-head h1 .y { color: var(--g-yellow); } .page-head h1 .g { color: var(--g-green); }
+.page-head p { color: var(--ink-2); font-size: 13px; margin-top: 8px; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 22px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.card {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  padding: 26px 16px 16px;
+  box-shadow: var(--raised);
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+}
+.card.featured { border-color: var(--g-blue); box-shadow: var(--raised), 0 0 0 2px var(--g-blue); }
+.card.featured::before {
+  content: "推荐"; position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
+  background: var(--g-blue); color: #fff; font-size: 10px; padding: 1px 10px; border-radius: 8px;
+  box-shadow: var(--raised); font-weight: 600;
+}
+.card .logo-box { width: 100px; height: 100px; display: flex; align-items: center; justify-content: center; position: relative; }
+.card .name { font-weight: 700; font-size: 14px; margin-top: 18px; }
+.card .desc { font-size: 11px; color: var(--ink-2); margin-top: 5px; line-height: 1.5; min-height: 32px; }
+.card .sizes { display: flex; gap: 12px; align-items: flex-end; margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--edge); width: 100%; justify-content: center; }
+.card .sizes .s { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.card .sizes .s span { font-size: 9px; color: var(--ink-3); }
+
+/* ========================================================
+   拟物 logo 方案 - 重点在材质、光影、立体感
+   ======================================================== */
+
+/* S1：拟物珐琅徽章（凹凸金属边 + 四色珐琅填充 E）
+   像锤子手机背面的金属徽章 */
+.s1 {
+  width: 100%; height: 100%; border-radius: 24%;
+  background:
+    radial-gradient(circle at 30% 25%, #fff, #e6e1d4 40%, #c8c2b2 100%);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.95) inset,
+    0 -2px 2px rgba(0,0,0,.18) inset,
+    0 4px 10px rgba(60,50,30,.25),
+    0 1px 2px rgba(60,50,30,.15);
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.s1::before {
+  /* 内圈金属凹槽 */
+  content: ""; position: absolute; inset: 10%;
+  border-radius: 18%;
+  background: linear-gradient(135deg, #d8d2c4, #f4f1ea 50%, #b8b2a2);
+  box-shadow:
+    0 2px 3px rgba(0,0,0,.3) inset,
+    0 -1px 0 rgba(255,255,255,.5) inset,
+    0 0 0 1px rgba(0,0,0,.15);
+}
+.s1::after {
+  /* 四色珐琅 E 字 */
+  content: "E"; position: absolute; z-index: 2;
+  font-family: Georgia, serif; font-weight: 900;
+  font-size: 56%; color: transparent;
+  background: linear-gradient(135deg, var(--g-blue) 0 30%, var(--g-red) 30% 55%, var(--g-yellow) 55% 78%, var(--g-green) 78% 100%);
+  -webkit-background-clip: text; background-clip: text;
+  filter: drop-shadow(0 1px 0 rgba(255,255,255,.4)) drop-shadow(0 1px 1px rgba(0,0,0,.3));
+}
+
+/* S2：拟物皮质按钮（凸起圆钮 + 四色十字凹槽）
+   像锤子手机的实体按键 */
+.s2 {
+  width: 100%; height: 100%; border-radius: 50%;
+  background:
+    radial-gradient(circle at 32% 28%, #fff 0%, #f4f1ea 25%, #d8d2c4 70%, #b8b2a2 100%);
+  box-shadow:
+    0 2px 0 rgba(255,255,255,.9) inset,
+    0 -3px 4px rgba(0,0,0,.2) inset,
+    0 5px 12px rgba(60,50,30,.28),
+    0 2px 3px rgba(60,50,30,.15);
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.s2::before {
+  /* 四色十字凹槽 */
+  content: ""; position: absolute; width: 70%; height: 70%;
+  background:
+    linear-gradient(0deg, transparent 47%, rgba(0,0,0,.18) 47% 53%, transparent 53%),
+    linear-gradient(90deg, transparent 47%, rgba(0,0,0,.18) 47% 53%, transparent 53%);
+  border-radius: 50%;
+}
+.s2 .seg {
+  position: absolute; width: 33%; height: 33%;
+  box-shadow: 0 1px 1px rgba(0,0,0,.25) inset, 0 -1px 0 rgba(255,255,255,.3) inset;
+  border-radius: 4px;
+}
+.s2 .seg1 { background: var(--g-blue);   top: 13%; left: 33%; }
+.s2 .seg2 { background: var(--g-red);    top: 33%; left: 53%; }
+.s2 .seg3 { background: var(--g-yellow); top: 53%; left: 33%; }
+.s2 .seg4 { background: var(--g-green);  top: 33%; left: 13%; }
+.s2::after {
+  /* 中心金属铆钉 */
+  content: ""; position: absolute; z-index: 3;
+  width: 14%; height: 14%; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff, #d8d2c4 60%, #a8a292);
+  box-shadow: 0 1px 2px rgba(0,0,0,.35), 0 0 0 1px rgba(0,0,0,.2);
+}
+
+/* S3：拟物琉璃砖（半透明四色玻璃叠加 E）
+   像有色琉璃砖拼出的字母 */
+.s3 {
+  width: 100%; height: 100%; border-radius: 18%;
+  background: linear-gradient(135deg, #fbfaf6, #e6e1d4);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.9) inset,
+    0 -2px 2px rgba(0,0,0,.15) inset,
+    0 4px 10px rgba(60,50,30,.22);
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.s3 .glass {
+  position: absolute;
+  border-radius: 8px;
+  opacity: .82;
+  box-shadow:
+    0 1px 1px rgba(0,0,0,.15),
+    0 1px 0 rgba(255,255,255,.45) inset,
+    0 -1px 1px rgba(0,0,0,.12) inset;
+}
+.s3 .g1 { background: linear-gradient(135deg, #6fa3f7, var(--g-blue-d));  width: 18%; height: 60%; top: 20%; left: 22%; }
+.s3 .g2 { background: linear-gradient(135deg, #f06a5c, #c3372a);          width: 18%; height: 60%; top: 20%; left: 42%; }
+.s3 .g3 { background: linear-gradient(135deg, #ffd24a, #d9a300);          width: 18%; height: 28%; top: 20%; left: 62%; }
+.s3 .g4 { background: linear-gradient(135deg, #ffd24a, #d9a300);          width: 18%; height: 28%; top: 52%; left: 62%; }
+/* 拼成 E 形：蓝竖 | 红竖 | 黄上横 | 黄下横 */
+.s3::after {
+  content: ""; position: absolute; inset: 8%;
+  border-radius: 14%;
+  box-shadow: 0 1px 0 rgba(255,255,255,.5) inset, 0 -1px 1px rgba(0,0,0,.15) inset;
+  pointer-events: none;
+}
+
+/* S4：拟物金属铭牌（拉丝金属 + 阴刻四色 E）
+   像锤子手机背面的刻字铭牌 */
+.s4 {
+  width: 100%; height: 100%; border-radius: 14%;
+  background:
+    repeating-linear-gradient(90deg, #e8e3d6 0 1px, #f4f1ea 1px 2px, #ddd6c6 2px 3px),
+    linear-gradient(180deg, #fbfaf6, #d8d2c4);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.8) inset,
+    0 -2px 3px rgba(0,0,0,.2) inset,
+    0 4px 10px rgba(60,50,30,.22);
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.s4::before {
+  /* 内凹边框 */
+  content: ""; position: absolute; inset: 8%;
+  border-radius: 10%;
+  box-shadow: 0 1px 2px rgba(0,0,0,.25) inset, 0 -1px 0 rgba(255,255,255,.5) inset;
+  border: 1px solid rgba(0,0,0,.12);
+}
+.s4::after {
+  content: "E"; position: absolute; z-index: 2;
+  font-family: Georgia, serif; font-weight: 900; font-size: 58%;
+  background: linear-gradient(180deg, var(--g-blue) 0 25%, var(--g-red) 25% 50%, var(--g-yellow) 50% 75%, var(--g-green) 75% 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,.35));
+}
+
+/* S5：拟物药丸胶囊（四色分段胶囊 + E 字）
+   像锤子系统的彩色标签胶囊 */
+.s5 {
+  width: 100%; height: 70%; align-self: center;
+  border-radius: 999px;
+  background: var(--card);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.9) inset,
+    0 -2px 3px rgba(0,0,0,.18) inset,
+    0 4px 10px rgba(60,50,30,.22);
+  display: flex; overflow: hidden; position: relative;
+}
+.s5 .cap {
+  flex: 1;
+  box-shadow: 0 1px 0 rgba(255,255,255,.35) inset, 0 -1px 1px rgba(0,0,0,.15) inset;
+}
+.s5 .cap1 { background: linear-gradient(180deg, #6fa3f7, var(--g-blue-d)); }
+.s5 .cap2 { background: linear-gradient(180deg, #f06a5c, #c3372a); }
+.s5 .cap3 { background: linear-gradient(180deg, #ffd24a, #d9a300); }
+.s5 .cap4 { background: linear-gradient(180deg, #5dc877, #2d8e47); }
+.s5::after {
+  content: "E"; position: absolute; z-index: 2;
+  left: 50%; top: 50%; transform: translate(-50%,-50%);
+  font-family: Georgia, serif; font-weight: 900; font-size: 44%;
+  color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.4);
+}
+
+/* S6：拟物印章（红色蜡封感，但四色版本）
+   像盖在纸上的四色印章 */
+.s6 {
+  width: 100%; height: 100%; border-radius: 50%;
+  background:
+    radial-gradient(circle at 32% 28%, var(--g-blue) 0%, var(--g-blue-d) 60%, #0d4ea8 100%);
+  box-shadow:
+    0 2px 0 rgba(255,255,255,.2) inset,
+    0 -3px 5px rgba(0,0,0,.35) inset,
+    0 5px 12px rgba(60,50,30,.3),
+    0 0 0 3px var(--card),
+    0 0 0 4px rgba(0,0,0,.15);
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.s6::before {
+  /* 四色环 */
+  content: ""; position: absolute; inset: 12%;
+  border-radius: 50%;
+  background: conic-gradient(var(--g-blue) 0 90deg, var(--g-red) 90deg 180deg, var(--g-yellow) 180deg 270deg, var(--g-green) 270deg 360deg);
+  box-shadow: 0 1px 2px rgba(0,0,0,.3) inset, 0 -1px 0 rgba(255,255,255,.2) inset;
+}
+.s6::after {
+  content: "E"; position: absolute; z-index: 3;
+  font-family: Georgia, serif; font-weight: 900; font-size: 50%;
+  color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.5);
+  background: radial-gradient(circle at 35% 30%, #4a463e, #2b2a26);
+  width: 42%; height: 42%; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 4px rgba(0,0,0,.4) inset, 0 -1px 0 rgba(255,255,255,.15) inset, 0 1px 2px rgba(0,0,0,.3);
+}
+
+/* S7：拟物皮革贴标（缝线边 + 四色压花 E）
+   像锤子手机皮套上的皮革标签 */
+.s7 {
+  width: 100%; height: 100%; border-radius: 18%;
+  background:
+    radial-gradient(circle at 30% 25%, #5a4632 0%, #3d2e1f 60%, #2a1f12 100%);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.15) inset,
+    0 -2px 3px rgba(0,0,0,.4) inset,
+    0 4px 10px rgba(60,50,30,.3);
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.s7::before {
+  /* 缝线 */
+  content: ""; position: absolute; inset: 9%;
+  border-radius: 12%;
+  border: 1px dashed rgba(255,255,255,.25);
+}
+.s7::after {
+  content: "E"; position: absolute; z-index: 2;
+  font-family: Georgia, serif; font-weight: 900; font-size: 60%;
+  background: linear-gradient(135deg, var(--g-blue) 0 30%, var(--g-red) 30% 55%, var(--g-yellow) 55% 78%, var(--g-green) 78% 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,.5));
+}
+
+/* ====== 实际尺寸预览 ====== */
+.realuse {
+  max-width: 1100px; margin: 40px auto 0;
+  background: linear-gradient(#fbfaf6, #f1ede3);
+  border: 1px solid var(--edge); border-radius: 12px;
+  padding: 14px 18px; box-shadow: var(--raised);
+}
+.realuse .rh { font-size: 12px; font-weight: 700; color: var(--ink-2); margin-bottom: 10px; }
+.realuse .row { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+.realuse .item { display: flex; align-items: center; gap: 8px; }
+.realuse .item .lbl { font-size: 10px; color: var(--ink-3); }
+.realuse .brand-mini { font-weight: 700; font-size: 14px; }
+.realuse .brand-mini .b { color: var(--g-blue); } .realuse .brand-mini .r { color: var(--g-red); }
+.realuse .brand-mini .y { color: var(--g-yellow); } .realuse .brand-mini .g { color: var(--g-green); }
+
+.darkuse {
+  max-width: 1100px; margin: 20px auto 0;
+  background: #2b2a26; border-radius: 12px;
+  padding: 14px 18px;
+}
+.darkuse .rh { font-size: 12px; font-weight: 700; color: #9a9488; margin-bottom: 10px; }
+.darkuse .row { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+.darkuse .item { display: flex; align-items: center; gap: 8px; }
+.darkuse .item .lbl { font-size: 10px; color: #6b675e; }
+.darkuse .brand-mini { font-weight: 700; font-size: 14px; color: #fbfaf6; }
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>EMS<span class="b">o</span>d<span class="r">e</span>r L<span class="y">o</span>g<span class="g">o</span> · 拟物方向</h1>
+  <p>7 个方案 · 重点在材质光影 · 锤子系统拟物感</p>
+</div>
+
+<div class="grid">
+
+  <div class="card featured">
+    <div class="logo-box"><div class="s1"></div></div>
+    <div class="name">S1 · 珐琅徽章（推荐）</div>
+    <div class="desc">金属凹边 + 四色珐琅 E 字，像锤子手机背面徽章。最有质感，缩小仍清晰。</div>
+    <div class="sizes">
+      <div class="s"><div class="s1" style="width:32px;height:32px"></div><span>32</span></div>
+      <div class="s"><div class="s1" style="width:20px;height:20px"></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="s2">
+        <div class="seg seg1"></div><div class="seg seg2"></div><div class="seg seg3"></div><div class="seg seg4"></div>
+      </div>
+    </div>
+    <div class="name">S2 · 实体按键</div>
+    <div class="desc">凸起圆钮 + 四色十字凹槽 + 金属铆钉。像锤子实体键，触感强。</div>
+    <div class="sizes">
+      <div class="s"><div class="s2" style="width:32px;height:32px"><div class="seg seg1"></div><div class="seg seg2"></div><div class="seg seg3"></div><div class="seg seg4"></div></div><span>32</span></div>
+      <div class="s"><div class="s2" style="width:20px;height:20px"><div class="seg seg1"></div><div class="seg seg2"></div><div class="seg seg3"></div><div class="seg seg4"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="s3">
+        <div class="glass g1"></div><div class="glass g2"></div><div class="glass g3"></div><div class="glass g4"></div>
+      </div>
+    </div>
+    <div class="name">S3 · 琉璃砖拼 E</div>
+    <div class="desc">四块半透明彩色玻璃砖拼出 E 形（蓝竖红竖黄横）。像彩色琉璃。</div>
+    <div class="sizes">
+      <div class="s"><div class="s3" style="width:32px;height:32px"><div class="glass g1"></div><div class="glass g2"></div><div class="glass g3"></div><div class="glass g4"></div></div><span>32</span></div>
+      <div class="s"><div class="s3" style="width:20px;height:20px"><div class="glass g1"></div><div class="glass g2"></div><div class="glass g3"></div><div class="glass g4"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box"><div class="s4"></div></div>
+    <div class="name">S4 · 拉丝铭牌</div>
+    <div class="desc">拉丝金属底 + 内凹边框 + 阴刻四色 E 字。像锤子背面刻字铭牌。</div>
+    <div class="sizes">
+      <div class="s"><div class="s4" style="width:32px;height:32px"></div><span>32</span></div>
+      <div class="s"><div class="s4" style="width:20px;height:20px"></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="s5">
+        <div class="cap cap1"></div><div class="cap cap2"></div><div class="cap cap3"></div><div class="cap cap4"></div>
+      </div>
+    </div>
+    <div class="name">S5 · 胶囊药丸</div>
+    <div class="desc">四色分段胶囊 + 中心白 E 字。像锤子系统彩色标签，圆润可爱。</div>
+    <div class="sizes">
+      <div class="s"><div class="s5" style="width:32px;height:22px"><div class="cap cap1"></div><div class="cap cap2"></div><div class="cap cap3"></div><div class="cap cap4"></div></div><span>32</span></div>
+      <div class="s"><div class="s5" style="width:20px;height:14px"><div class="cap cap1"></div><div class="cap cap2"></div><div class="cap cap3"></div><div class="cap cap4"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box"><div class="s6"></div></div>
+    <div class="name">S6 · 蜡封印章</div>
+    <div class="desc">四色锥形环 + 深色中心 E 字，像盖在纸上的印章。立体感最强。</div>
+    <div class="sizes">
+      <div class="s"><div class="s6" style="width:32px;height:32px"></div><span>32</span></div>
+      <div class="s"><div class="s6" style="width:20px;height:20px"></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box"><div class="s7"></div></div>
+    <div class="name">S7 · 皮革贴标</div>
+    <div class="desc">深棕皮革底 + 缝线边 + 压花四色 E 字。像锤子皮套标签，复古。</div>
+    <div class="sizes">
+      <div class="s"><div class="s7" style="width:32px;height:32px"></div><span>32</span></div>
+      <div class="s"><div class="s7" style="width:20px;height:20px"></div><span>20</span></div>
+    </div>
+  </div>
+
+</div>
+
+<div class="realuse">
+  <div class="rh">浅色顶栏实际尺寸对照（30px）</div>
+  <div class="row">
+    <div class="item">
+      <div class="s1" style="width:30px;height:30px"></div>
+      <span class="brand-mini">EM<span class="b">S</span><span class="r">o</span><span class="y">d</span><span class="g">e</span>r</span>
+      <span class="lbl">S1</span>
+    </div>
+    <div class="item">
+      <div class="s4" style="width:30px;height:30px"></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">S4</span>
+    </div>
+    <div class="item">
+      <div class="s6" style="width:30px;height:30px"></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">S6</span>
+    </div>
+    <div class="item">
+      <div class="s7" style="width:30px;height:30px"></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">S7</span>
+    </div>
+  </div>
+</div>
+
+<div class="darkuse">
+  <div class="rh">深色底测试（30px）</div>
+  <div class="row">
+    <div class="item">
+      <div class="s1" style="width:30px;height:30px"></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">S1</span>
+    </div>
+    <div class="item">
+      <div class="s6" style="width:30px;height:30px"></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">S6</span>
+    </div>
+    <div class="item">
+      <div class="s7" style="width:30px;height:30px"></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">S7</span>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

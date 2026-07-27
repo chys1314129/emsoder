@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+DIR="$(cd "$(dirname "$0")/.." && pwd)"
+ENTRY="$DIR/node_modules/firecrawl-cli/dist/index.js"
+if [ -x "$DIR/node/node" ] || [ -x "$DIR/node/node.exe" ]; then
+  exec "$DIR/node/node" "$ENTRY" "$@" 2>/dev/null || exec "$DIR/node/node.exe" "$ENTRY" "$@"
+fi
+if command -v node >/dev/null 2>&1; then
+  exec node "$ENTRY" "$@"
+fi
+echo "[EMSoder] node not found" >&2
+exit 1

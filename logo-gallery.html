@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>EMSoder Logo 方案集 · Google 四色 + 拟物</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --g-blue:   #4285F4;
+  --g-red:    #EA4335;
+  --g-yellow: #FBBC04;
+  --g-green:  #34A853;
+  --g-blue-d: #1a73e8;
+  --paper:    #f4f1ea;
+  --card:     #fbfaf6;
+  --edge:     #d8d2c4;
+  --ink:      #2b2a26;
+  --ink-2:    #6b675e;
+  --ink-3:    #9a9488;
+  --raised: 0 1px 0 rgba(255,255,255,.9) inset, 0 -1px 0 rgba(0,0,0,.06) inset, 0 2px 5px rgba(60,50,30,.16), 0 1px 1px rgba(60,50,30,.10);
+  --raised-strong: 0 1px 0 rgba(255,255,255,.95) inset, 0 -2px 0 rgba(0,0,0,.08) inset, 0 4px 12px rgba(60,50,30,.2);
+}
+
+html, body { height: 100%; }
+body {
+  font-family: "PingFang SC", "Helvetica Neue", "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--paper);
+  background-image:
+    radial-gradient(circle at 15% 8%, rgba(66,133,244,.06), transparent 35%),
+    radial-gradient(circle at 85% 92%, rgba(234,67,53,.05), transparent 35%),
+    radial-gradient(circle at 90% 10%, rgba(251,188,4,.04), transparent 30%),
+    radial-gradient(circle at 10% 90%, rgba(52,170,83,.04), transparent 30%);
+  color: var(--ink);
+  padding: 36px 28px 60px;
+  min-height: 100%;
+}
+
+.page-head { text-align: center; margin-bottom: 36px; }
+.page-head h1 { font-size: 22px; font-weight: 700; letter-spacing: .5px; }
+.page-head h1 .b { color: var(--g-blue); } .page-head h1 .r { color: var(--g-red); }
+.page-head h1 .y { color: var(--g-yellow); } .page-head h1 .g { color: var(--g-green); }
+.page-head p { color: var(--ink-2); font-size: 13px; margin-top: 8px; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 22px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  padding: 26px 16px 18px;
+  box-shadow: var(--raised);
+  display: flex; flex-direction: column; align-items: center;
+  text-align: center;
+}
+.card .logo-box {
+  width: 96px; height: 96px;
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+}
+.card .name { font-weight: 700; font-size: 14px; margin-top: 16px; }
+.card .desc { font-size: 11px; color: var(--ink-2); margin-top: 5px; line-height: 1.5; min-height: 32px; }
+.card .sizes { display: flex; gap: 12px; align-items: flex-end; margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--edge); width: 100%; justify-content: center; }
+.card .sizes .s { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.card .sizes .s span { font-size: 9px; color: var(--ink-3); }
+
+/* ====== 各方案 logo ====== */
+
+/* 方案 A：四色四瓣 + 中心 E（经典 Google 风） */
+.logo-a {
+  width: 100%; height: 100%; border-radius: 22%;
+  background: conic-gradient(from 225deg, var(--g-blue) 0 90deg, var(--g-red) 90deg 180deg, var(--g-yellow) 180deg 270deg, var(--g-green) 270deg 360deg);
+  box-shadow: var(--raised-strong), 0 0 0 1px rgba(0,0,0,.12), inset 0 0 0 3px rgba(255,255,255,.28);
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+}
+.logo-a::after {
+  content: "E"; position: absolute;
+  font-weight: 800; font-size: 52%; color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,.3);
+  font-family: Georgia, serif;
+}
+
+/* 方案 B：E 字四色描边（字母本身是 logo） */
+.logo-b {
+  width: 80%; height: 80%;
+  font-family: Georgia, "Times New Roman", serif;
+  font-weight: 900; font-size: 90px;
+  line-height: 1;
+  background: linear-gradient(135deg, var(--g-blue) 0 35%, var(--g-red) 35% 55%, var(--g-yellow) 55% 75%, var(--g-green) 75% 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 1px rgba(0,0,0,.15));
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* 方案 C：四色圆环 + 中心代码括号 */
+.logo-c {
+  width: 100%; height: 100%; border-radius: 50%;
+  background: conic-gradient(var(--g-blue) 0 90deg, var(--g-red) 90deg 180deg, var(--g-yellow) 180deg 270deg, var(--g-green) 270deg 360deg);
+  box-shadow: var(--raised-strong), 0 0 0 1px rgba(0,0,0,.12);
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+}
+.logo-c::before {
+  content: ""; position: absolute; inset: 14%;
+  border-radius: 50%; background: var(--card);
+  box-shadow: 0 1px 2px rgba(0,0,0,.15) inset;
+}
+.logo-c::after {
+  content: "</>"; position: absolute;
+  font-family: "JetBrains Mono", monospace; font-weight: 700;
+  font-size: 26%; color: var(--ink);
+}
+
+/* 方案 D：四色方块拼图（像 Windows 磁贴） */
+.logo-d {
+  width: 100%; height: 100%;
+  display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+  gap: 4px; padding: 4px;
+  border-radius: 22%;
+  background: var(--card);
+  box-shadow: var(--raised-strong), 0 0 0 1px rgba(0,0,0,.12);
+}
+.logo-d .t { border-radius: 18%; box-shadow: 0 1px 1px rgba(0,0,0,.15), 0 1px 0 rgba(255,255,255,.3) inset; }
+.logo-d .t1 { background: var(--g-blue); }
+.logo-d .t2 { background: var(--g-red); }
+.logo-d .t3 { background: var(--g-yellow); }
+.logo-d .t4 { background: var(--g-green); }
+.logo-d .t1::after { content: "E"; color: #fff; }
+
+/* 方案 E：终端窗口 + 四色顶栏（编程向） */
+.logo-e {
+  width: 100%; height: 100%; border-radius: 18%;
+  background: var(--card);
+  box-shadow: var(--raised-strong), 0 0 0 1px rgba(0,0,0,.12);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.logo-e .bar { height: 22%; display: flex; }
+.logo-e .bar i { flex: 1; }
+.logo-e .bar i:nth-child(1){ background: var(--g-blue); }
+.logo-e .bar i:nth-child(2){ background: var(--g-red); }
+.logo-e .bar i:nth-child(3){ background: var(--g-yellow); }
+.logo-e .bar i:nth-child(4){ background: var(--g-green); }
+.logo-e .screen {
+  flex: 1; background: #2b2a26; display: flex; align-items: center; justify-content: center;
+  font-family: "JetBrains Mono", monospace; color: #fff; font-size: 30%; font-weight: 700;
+}
+.logo-e .screen::after { content: ">_"; }
+
+/* 方案 F：四色花瓣（Google Maps 大头针变体） */
+.logo-f {
+  width: 100%; height: 100%; position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.logo-f .petal {
+  position: absolute; width: 38%; height: 60%;
+  border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+  box-shadow: 0 2px 4px rgba(0,0,0,.2), 0 1px 0 rgba(255,255,255,.4) inset;
+  top: 18%;
+}
+.logo-f .p1 { background: var(--g-blue);   left: 30%; transform: rotate(-30deg); }
+.logo-f .p2 { background: var(--g-red);    left: 32%; transform: rotate(30deg); }
+.logo-f .p3 { background: var(--g-yellow); left: 28%; transform: rotate(90deg); opacity: .9; }
+.logo-f .p4 { background: var(--g-green);  left: 32%; transform: rotate(150deg); opacity: .9; }
+.logo-f::after {
+  content: "E"; position: absolute; z-index: 2;
+  font-family: Georgia, serif; font-weight: 800; font-size: 40%;
+  color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.4);
+}
+
+/* 方案 G：四色叠层 E（立体纸艺） */
+.logo-g {
+  width: 100%; height: 100%; position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.logo-g .layer {
+  position: absolute; font-family: Georgia, serif; font-weight: 900;
+  font-size: 75%; line-height: 1;
+}
+.logo-g .l1 { color: var(--g-blue); transform: translate(-4px, -4px); opacity: .92; }
+.logo-g .l2 { color: var(--g-red); transform: translate(-1px, -1px); opacity: .92; }
+.logo-g .l3 { color: var(--g-yellow); transform: translate(2px, 2px); opacity: .92; }
+.logo-g .l4 { color: var(--g-green); }
+.logo-g::after {
+  content: ""; position: absolute; inset: -8%;
+  border-radius: 22%;
+  box-shadow: var(--raised);
+  background: linear-gradient(rgba(255,255,255,.4), rgba(255,255,255,0));
+  z-index: -1;
+}
+
+/* 方案 H：四色铅笔头（编程/创作） */
+.logo-h {
+  width: 100%; height: 100%; border-radius: 22%;
+  background: var(--card);
+  box-shadow: var(--raised-strong), 0 0 0 1px rgba(0,0,0,.12);
+  display: grid; grid-template-columns: 1fr 1fr; padding: 14%;
+  gap: 6px;
+}
+.logo-h .pen {
+  border-radius: 3px 3px 40% 40%;
+  box-shadow: 0 1px 1px rgba(0,0,0,.18), 0 1px 0 rgba(255,255,255,.35) inset;
+  position: relative;
+}
+.logo-h .pen::after {
+  content: ""; position: absolute; bottom: 8%; left: 30%; width: 40%; height: 12%;
+  background: rgba(0,0,0,.2); border-radius: 1px;
+}
+.logo-h .pen1 { background: var(--g-blue); }
+.logo-h .pen2 { background: var(--g-red); }
+.logo-h .pen3 { background: var(--g-yellow); }
+.logo-h .pen4 { background: var(--g-green); }
+
+/* ====== 顶栏实际尺寸预览 ====== */
+.realuse {
+  max-width: 1100px; margin: 40px auto 0;
+  background: linear-gradient(#fbfaf6, #f1ede3);
+  border: 1px solid var(--edge); border-radius: 12px;
+  padding: 14px 18px; box-shadow: var(--raised);
+}
+.realuse .rh { font-size: 12px; font-weight: 700; color: var(--ink-2); margin-bottom: 10px; }
+.realuse .row { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
+.realuse .item { display: flex; align-items: center; gap: 8px; }
+.realuse .item .lbl { font-size: 10px; color: var(--ink-3); }
+.realuse .brand-mini { font-weight: 700; font-size: 14px; }
+.realuse .brand-mini .b { color: var(--g-blue); } .realuse .brand-mini .r { color: var(--g-red); }
+.realuse .brand-mini .y { color: var(--g-yellow); } .realuse .brand-mini .g { color: var(--g-green); }
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>EMS<span class="b">o</span>d<span class="r">e</span>r L<span class="y">o</span>g<span class="g">o</span> 方案集</h1>
+  <p>Google 四色 · 锤子拟物 · 8 个候选，鼠标看实际尺寸</p>
+</div>
+
+<div class="grid">
+
+  <div class="card">
+    <div class="logo-box"><div class="logo-a"></div></div>
+    <div class="name">A · 四色四瓣 E</div>
+    <div class="desc">经典 Google 风：四色锥形渐变方块，中心白色衬 E 字。识别度最高。</div>
+    <div class="sizes">
+      <div class="s"><div class="logo-a" style="width:32px;height:32px"></div><span>32</span></div>
+      <div class="s"><div class="logo-a" style="width:20px;height:20px"></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box"><div class="logo-b">E</div></div>
+    <div class="name">B · 四色描边 E</div>
+    <div class="desc">字母本身就是 logo，E 字四色斜向渐变填充，极简，放大也好看。</div>
+    <div class="sizes">
+      <div class="s"><div class="logo-b" style="font-size:32px">E</div><span>32</span></div>
+      <div class="s"><div class="logo-b" style="font-size:20px">E</div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box"><div class="logo-c"></div></div>
+    <div class="name">C · 四色环代码括号</div>
+    <div class="desc">四色圆环 + 中心白底放 <code>&lt;/&gt;</code>，强调"编程"属性。</div>
+    <div class="sizes">
+      <div class="s"><div class="logo-c" style="width:32px;height:32px"></div><span>32</span></div>
+      <div class="s"><div class="logo-c" style="width:20px;height:20px"></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="logo-d">
+        <div class="t t1"></div><div class="t t2"></div><div class="t t3"></div><div class="t t4"></div>
+      </div>
+    </div>
+    <div class="name">D · 四色磁贴拼图</div>
+    <div class="desc">四块独立色块拼成方块，左上蓝格带 E 字。像 Windows 磁贴，立体感强。</div>
+    <div class="sizes">
+      <div class="s"><div class="logo-d" style="width:32px;height:32px"><div class="t t1"></div><div class="t t2"></div><div class="t t3"></div><div class="t t4"></div></div><span>32</span></div>
+      <div class="s"><div class="logo-d" style="width:20px;height:20px"><div class="t t1"></div><div class="t t2"></div><div class="t t3"></div><div class="t t4"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="logo-e">
+        <div class="bar"><i></i><i></i><i></i><i></i></div>
+        <div class="screen"></div>
+      </div>
+    </div>
+    <div class="name">E · 终端窗 + 四色栏</div>
+    <div class="desc">终端窗口造型，顶部四色条，深色屏 <code>&gt;_</code>。最"编程"的方案。</div>
+    <div class="sizes">
+      <div class="s"><div class="logo-e" style="width:32px;height:32px"><div class="bar"><i></i><i></i><i></i><i></i></div><div class="screen"></div></div><span>32</span></div>
+      <div class="s"><div class="logo-e" style="width:20px;height:20px"><div class="bar"><i></i><i></i><i></i><i></i></div><div class="screen"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="logo-f">
+        <div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div>
+      </div>
+    </div>
+    <div class="name">F · 四色花瓣</div>
+    <div class="desc">四片彩色花瓣绕中心 E 字，像 Google Maps 大头针变体，柔和有动感。</div>
+    <div class="sizes">
+      <div class="s"><div class="logo-f" style="width:32px;height:32px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div></div><span>32</span></div>
+      <div class="s"><div class="logo-f" style="width:20px;height:20px"><div class="petal p1"></div><div class="petal p2"></div><div class="petal p3"></div><div class="petal p4"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="logo-g">
+        <span class="layer l1">E</span><span class="layer l2">E</span><span class="layer l3">E</span><span class="layer l4">E</span>
+      </div>
+    </div>
+    <div class="name">G · 四色叠层 E</div>
+    <div class="desc">四个 E 字四色错位叠放，像纸艺堆叠。最"锤子拟物"的一个。</div>
+    <div class="sizes">
+      <div class="s"><div class="logo-g" style="width:32px;height:32px"><span class="layer l1">E</span><span class="layer l2">E</span><span class="layer l3">E</span><span class="layer l4">E</span></div><span>32</span></div>
+      <div class="s"><div class="logo-g" style="width:20px;height:20px"><span class="layer l1">E</span><span class="layer l2">E</span><span class="layer l3">E</span><span class="layer l4">E</span></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="logo-h">
+        <div class="pen pen1"></div><div class="pen pen2"></div><div class="pen pen3"></div><div class="pen pen4"></div>
+      </div>
+    </div>
+    <div class="name">H · 四色铅笔头</div>
+    <div class="desc">四支四色铅笔头朝下排列，象征"创作/书写代码"，拟物立体。</div>
+    <div class="sizes">
+      <div class="s"><div class="logo-h" style="width:32px;height:32px"><div class="pen pen1"></div><div class="pen pen2"></div><div class="pen pen3"></div><div class="pen pen4"></div></div><span>32</span></div>
+      <div class="s"><div class="logo-h" style="width:20px;height:20px"><div class="pen pen1"></div><div class="pen pen2"></div><div class="pen pen3"></div><div class="pen pen4"></div></div><span>20</span></div>
+    </div>
+  </div>
+
+</div>
+
+<div class="realuse">
+  <div class="rh">顶栏实际尺寸对照</div>
+  <div class="row">
+    <div class="item">
+      <div class="logo-a" style="width:30px;height:30px"></div>
+      <span class="brand-mini">EM<span class="b">S</span><span class="r">o</span><span class="y">d</span><span class="g">e</span>r</span>
+      <span class="lbl">A</span>
+    </div>
+    <div class="item">
+      <div class="logo-c" style="width:30px;height:30px"></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">C</span>
+    </div>
+    <div class="item">
+      <div class="logo-d" style="width:30px;height:30px"><div class="t t1"></div><div class="t t2"></div><div class="t t3"></div><div class="t t4"></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">D</span>
+    </div>
+    <div class="item">
+      <div class="logo-e" style="width:30px;height:30px"><div class="bar"><i></i><i></i><i></i><i></i></div><div class="screen"></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">E</span>
+    </div>
+    <div class="item">
+      <div class="logo-g" style="width:30px;height:30px"><span class="layer l1">E</span><span class="layer l2">E</span><span class="layer l3">E</span><span class="layer l4">E</span></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">G</span>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

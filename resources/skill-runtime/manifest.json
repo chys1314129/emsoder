@@ -1,0 +1,40 @@
+{
+  "version": 2,
+  "syncedAt": "2026-07-22T08:25:10.134Z",
+  "tools": [
+    {
+      "name": "firecrawl",
+      "kind": "npm",
+      "pkg": "firecrawl-cli"
+    },
+    {
+      "name": "mmx",
+      "kind": "npm",
+      "pkg": "mmx-cli"
+    },
+    {
+      "name": "python",
+      "kind": "runtime"
+    },
+    {
+      "name": "node",
+      "kind": "runtime"
+    }
+  ],
+  "runtime": {
+    "node": {
+      "bundled": true,
+      "kind": "local",
+      "version": null
+    },
+    "python": {
+      "bundled": true,
+      "from": "D:\\joyclaw\\resources\\python-win"
+    }
+  },
+  "notes": [
+    "PATH injects skill-runtime/bin + node + python so portable works without system installs.",
+    "API keys are NOT bundled.",
+    "Same resources work for portable.exe and NSIS installer (extraResources)."
+  ]
+}

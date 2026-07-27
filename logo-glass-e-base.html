@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>EMSoder Logo · T2 圆角琉璃 E + 底座</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --g-blue:   #4285F4;
+  --g-red:    #EA4335;
+  --g-yellow: #FBBC04;
+  --g-green:  #34A853;
+  --g-blue-d: #1a73e8;
+  --g-blue-l: #6fa3f7;
+  --g-red-l:  #f06a5c;
+  --g-red-d:  #c3372a;
+  --g-yellow-l:#ffd24a;
+  --g-yellow-d:#d9a300;
+  --g-green-l:#5dc877;
+  --g-green-d:#2d8e47;
+  --paper:    #f4f1ea;
+  --card:     #fbfaf6;
+  --edge:     #d8d2c4;
+  --ink:      #2b2a26;
+  --ink-2:    #6b675e;
+  --ink-3:    #9a9488;
+  --raised: 0 1px 0 rgba(255,255,255,.9) inset, 0 -1px 0 rgba(0,0,0,.06) inset, 0 2px 5px rgba(60,50,30,.16);
+  --raised-strong: 0 1px 0 rgba(255,255,255,.95) inset, 0 -2px 0 rgba(0,0,0,.08) inset, 0 4px 12px rgba(60,50,30,.2);
+  --glass-shadow: 0 1px 1px rgba(0,0,0,.18), 0 1px 0 rgba(255,255,255,.5) inset, 0 -1px 1px rgba(0,0,0,.15) inset, 0 0 0 1px rgba(0,0,0,.08);
+}
+
+html, body { height: 100%; }
+body {
+  font-family: "PingFang SC", "Helvetica Neue", "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--paper);
+  background-image:
+    radial-gradient(circle at 15% 8%, rgba(66,133,244,.06), transparent 35%),
+    radial-gradient(circle at 85% 92%, rgba(234,67,53,.05), transparent 35%);
+  color: var(--ink);
+  padding: 36px 28px 60px;
+  min-height: 100%;
+}
+
+.page-head { text-align: center; margin-bottom: 28px; }
+.page-head h1 { font-size: 22px; font-weight: 700; }
+.page-head h1 .b { color: var(--g-blue); } .page-head h1 .r { color: var(--g-red); }
+.page-head h1 .y { color: var(--g-yellow); } .page-head h1 .g { color: var(--g-green); }
+.page-head p { color: var(--ink-2); font-size: 13px; margin-top: 8px; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 22px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.card {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  padding: 26px 16px 16px;
+  box-shadow: var(--raised);
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+}
+.card.featured { border-color: var(--g-blue); box-shadow: var(--raised), 0 0 0 2px var(--g-blue); }
+.card.featured::before {
+  content: "推荐"; position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
+  background: var(--g-blue); color: #fff; font-size: 10px; padding: 1px 10px; border-radius: 8px;
+  box-shadow: var(--raised); font-weight: 600;
+}
+.card .logo-box { width: 100px; height: 100px; display: flex; align-items: center; justify-content: center; position: relative; }
+.card .name { font-weight: 700; font-size: 14px; margin-top: 18px; }
+.card .desc { font-size: 11px; color: var(--ink-2); margin-top: 5px; line-height: 1.5; min-height: 32px; }
+.card .sizes { display: flex; gap: 12px; align-items: flex-end; margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--edge); width: 100%; justify-content: center; }
+.card .sizes .s { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.card .sizes .s span { font-size: 9px; color: var(--ink-3); }
+
+/* ===== 琉璃 E 砖块（T2 圆角柔和版，圆角 10px）===== */
+.e-tiles { width: 62%; height: 70%; position: relative; }
+.e-tiles .tile {
+  position: absolute;
+  border-radius: 10px;
+  box-shadow: var(--glass-shadow);
+}
+.e-tiles .v  { left: 0;   top: 0;    width: 26%; height: 100%; background: linear-gradient(135deg, var(--g-blue-l), var(--g-blue-d)); }
+.e-tiles .th { left: 26%; top: 0;    width: 74%; height: 26%; background: linear-gradient(135deg, var(--g-yellow-l), var(--g-yellow-d)); }
+.e-tiles .mh { left: 26%; top: 37%;  width: 56%; height: 26%; background: linear-gradient(135deg, var(--g-green-l), var(--g-green-d)); }
+.e-tiles .bh { left: 26%; top: 74%;  width: 74%; height: 26%; background: linear-gradient(135deg, var(--g-red-l), var(--g-red-d)); }
+
+/* ===== 底座容器（包裹琉璃 E）===== */
+.base {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+}
+
+/* B1：米白纸底座（S3 原版风格，推荐） */
+.base-b1 {
+  border-radius: 22%;
+  background: linear-gradient(135deg, #fbfaf6, #ebe7dd);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.95) inset,
+    0 -2px 2px rgba(0,0,0,.12) inset,
+    0 4px 10px rgba(60,50,30,.22),
+    0 1px 2px rgba(60,50,30,.12);
+}
+
+/* B2：金属底座（拉丝金属边框） */
+.base-b2 {
+  border-radius: 22%;
+  background: radial-gradient(circle at 30% 25%, #fff, #e6e1d4 40%, #c8c2b2 100%);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.95) inset,
+    0 -2px 2px rgba(0,0,0,.18) inset,
+    0 4px 12px rgba(60,50,30,.25);
+  position: relative;
+}
+.base-b2::before {
+  content: ""; position: absolute; inset: 7%;
+  border-radius: 16%;
+  background: linear-gradient(135deg, #f4f1ea, #e6e1d4);
+  box-shadow: 0 1px 2px rgba(0,0,0,.2) inset, 0 -1px 0 rgba(255,255,255,.4) inset;
+}
+
+/* B3：深色底座（深灰底衬彩色 E，高对比） */
+.base-b3 {
+  border-radius: 22%;
+  background: radial-gradient(circle at 30% 25%, #4a463e, #2b2a26 70%, #1a1916 100%);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.12) inset,
+    0 -2px 3px rgba(0,0,0,.4) inset,
+    0 4px 12px rgba(60,50,30,.3);
+}
+
+/* B4：四色渐变底座（四色极淡作底，呼应琉璃） */
+.base-b4 {
+  border-radius: 22%;
+  background:
+    conic-gradient(from 225deg,
+      rgba(66,133,244,.15) 0 90deg,
+      rgba(234,67,53,.15) 90deg 180deg,
+      rgba(251,188,4,.15) 180deg 270deg,
+      rgba(52,170,83,.15) 270deg 360deg),
+    linear-gradient(135deg, #fbfaf6, #ebe7dd);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.95) inset,
+    0 -2px 2px rgba(0,0,0,.12) inset,
+    0 4px 10px rgba(60,50,30,.22);
+}
+
+/* B5：描边底座（白底 + 四色描边） */
+.base-b5 {
+  border-radius: 22%;
+  background: var(--card);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.9) inset,
+    0 -1px 1px rgba(0,0,0,.1) inset,
+    0 4px 10px rgba(60,50,30,.2),
+    0 0 0 2px var(--card),
+    0 0 0 3px transparent;
+  position: relative;
+}
+.base-b5::before {
+  content: ""; position: absolute; inset: 0;
+  border-radius: inherit;
+  padding: 2px;
+  background: linear-gradient(135deg, var(--g-blue), var(--g-red), var(--g-yellow), var(--g-green));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+/* B6：内凹底座（米白 + 内凹槽，琉璃嵌在里面） */
+.base-b6 {
+  border-radius: 22%;
+  background: linear-gradient(135deg, #fbfaf6, #ebe7dd);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.95) inset,
+    0 -2px 2px rgba(0,0,0,.12) inset,
+    0 4px 10px rgba(60,50,30,.22);
+}
+.base-b6::before {
+  content: ""; position: absolute; inset: 8%;
+  border-radius: 16%;
+  background: #f1ede3;
+  box-shadow: 0 2px 4px rgba(0,0,0,.18) inset, 0 -1px 0 rgba(255,255,255,.4) inset;
+}
+
+/* ===== 实际尺寸预览 ===== */
+.realuse {
+  max-width: 1100px; margin: 40px auto 0;
+  background: linear-gradient(#fbfaf6, #f1ede3);
+  border: 1px solid var(--edge); border-radius: 12px;
+  padding: 14px 18px; box-shadow: var(--raised);
+}
+.realuse .rh { font-size: 12px; font-weight: 700; color: var(--ink-2); margin-bottom: 10px; }
+.realuse .row { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+.realuse .item { display: flex; align-items: center; gap: 8px; }
+.realuse .item .lbl { font-size: 10px; color: var(--ink-3); }
+.realuse .brand-mini { font-weight: 700; font-size: 14px; }
+.realuse .brand-mini .b { color: var(--g-blue); } .realuse .brand-mini .r { color: var(--g-red); }
+.realuse .brand-mini .y { color: var(--g-yellow); } .realuse .brand-mini .g { color: var(--g-green); }
+
+.darkuse {
+  max-width: 1100px; margin: 20px auto 0;
+  background: #2b2a26; border-radius: 12px;
+  padding: 14px 18px;
+}
+.darkuse .rh { font-size: 12px; font-weight: 700; color: #9a9488; margin-bottom: 10px; }
+.darkuse .row { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+.darkuse .item { display: flex; align-items: center; gap: 8px; }
+.darkuse .item .lbl { font-size: 10px; color: #6b675e; }
+.darkuse .brand-mini { font-weight: 700; font-size: 14px; color: #fbfaf6; }
+
+/* 复用块 */
+.logo-full { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; position: relative; }
+.logo-full .e-tiles { z-index: 2; }
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>T2 圆角琉璃 <span class="b">E</span> <span class="r">+</span> <span class="y">底</span><span class="g">座</span></h1>
+  <p>6 个底座变体 · 圆角琉璃 E 嵌入不同材质底座</p>
+</div>
+
+<div class="grid">
+
+  <div class="card featured">
+    <div class="logo-box">
+      <div class="logo-full base-b1">
+        <div class="e-tiles">
+          <div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div>
+        </div>
+      </div>
+    </div>
+    <div class="name">B1 · 米白纸底座（推荐）</div>
+    <div class="desc">S3 原版风格：米白渐变底 + 凸起阴影，琉璃 E 嵌中央。最干净。</div>
+    <div class="sizes">
+      <div class="s"><div class="logo-full base-b1" style="width:32px;height:32px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div><span>32</span></div>
+      <div class="s"><div class="logo-full base-b1" style="width:20px;height:20px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="logo-full base-b2">
+        <div class="e-tiles">
+          <div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div>
+        </div>
+      </div>
+    </div>
+    <div class="name">B2 · 金属底座</div>
+    <div class="desc">拉丝金属外圈 + 内凹浅色面板，琉璃 E 嵌入。最有拟物感。</div>
+    <div class="sizes">
+      <div class="s"><div class="logo-full base-b2" style="width:32px;height:32px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div><span>32</span></div>
+      <div class="s"><div class="logo-full base-b2" style="width:20px;height:20px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="logo-full base-b3">
+        <div class="e-tiles">
+          <div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div>
+        </div>
+      </div>
+    </div>
+    <div class="name">B3 · 深色底座</div>
+    <div class="desc">深灰底衬彩色琉璃 E，对比最强，适合深色主题。</div>
+    <div class="sizes">
+      <div class="s"><div class="logo-full base-b3" style="width:32px;height:32px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div><span>32</span></div>
+      <div class="s"><div class="logo-full base-b3" style="width:20px;height:20px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="logo-full base-b4">
+        <div class="e-tiles">
+          <div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div>
+        </div>
+      </div>
+    </div>
+    <div class="name">B4 · 四色渐变底座</div>
+    <div class="desc">四色极淡锥形渐变作底，呼应琉璃 E 的四色，整体感强。</div>
+    <div class="sizes">
+      <div class="s"><div class="logo-full base-b4" style="width:32px;height:32px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div><span>32</span></div>
+      <div class="s"><div class="logo-full base-b4" style="width:20px;height:20px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="logo-full base-b5">
+        <div class="e-tiles">
+          <div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div>
+        </div>
+      </div>
+    </div>
+    <div class="name">B5 · 四色描边底座</div>
+    <div class="desc">白底 + 四色渐变描边，像相框衬琉璃 E，最精致。</div>
+    <div class="sizes">
+      <div class="s"><div class="logo-full base-b5" style="width:32px;height:32px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div><span>32</span></div>
+      <div class="s"><div class="logo-full base-b5" style="width:20px;height:20px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div><span>20</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="logo-box">
+      <div class="logo-full base-b6">
+        <div class="e-tiles">
+          <div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div>
+        </div>
+      </div>
+    </div>
+    <div class="name">B6 · 内凹底座</div>
+    <div class="desc">米白底 + 内凹槽面板，琉璃 E 像嵌进凹槽里。立体感强。</div>
+    <div class="sizes">
+      <div class="s"><div class="logo-full base-b6" style="width:32px;height:32px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div><span>32</span></div>
+      <div class="s"><div class="logo-full base-b6" style="width:20px;height:20px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div><span>20</span></div>
+    </div>
+  </div>
+
+</div>
+
+<div class="realuse">
+  <div class="rh">浅色顶栏实际尺寸对照（30px）</div>
+  <div class="row">
+    <div class="item">
+      <div class="logo-full base-b1" style="width:30px;height:30px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div>
+      <span class="brand-mini">EM<span class="b">S</span><span class="r">o</span><span class="y">d</span><span class="g">e</span>r</span>
+      <span class="lbl">B1</span>
+    </div>
+    <div class="item">
+      <div class="logo-full base-b2" style="width:30px;height:30px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">B2</span>
+    </div>
+    <div class="item">
+      <div class="logo-full base-b4" style="width:30px;height:30px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">B4</span>
+    </div>
+    <div class="item">
+      <div class="logo-full base-b5" style="width:30px;height:30px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">B5</span>
+    </div>
+    <div class="item">
+      <div class="logo-full base-b6" style="width:30px;height:30px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">B6</span>
+    </div>
+  </div>
+</div>
+
+<div class="darkuse">
+  <div class="rh">深色底测试（30px）</div>
+  <div class="row">
+    <div class="item">
+      <div class="logo-full base-b1" style="width:30px;height:30px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">B1</span>
+    </div>
+    <div class="item">
+      <div class="logo-full base-b3" style="width:30px;height:30px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">B3</span>
+    </div>
+    <div class="item">
+      <div class="logo-full base-b5" style="width:30px;height:30px"><div class="e-tiles" style="width:62%;height:70%"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div>
+      <span class="brand-mini">EMSoder</span>
+      <span class="lbl">B5</span>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
