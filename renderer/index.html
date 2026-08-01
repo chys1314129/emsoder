@@ -66,6 +66,9 @@
         <button class="act-btn" data-view="memory" title="长期记忆">
           <svg viewBox="0 0 24 24"><path d="M9.5 2a4.5 4.5 0 0 0-4.5 4.5c0 .9.3 1.8.7 2.5A4.5 4.5 0 0 0 3 13c0 1.5.7 2.8 1.8 3.6A4.5 4.5 0 0 0 9.5 22a4.5 4.5 0 0 0 3.5-1.7A4.5 4.5 0 0 0 16.5 22a4.5 4.5 0 0 0 4.7-5.4A4.5 4.5 0 0 0 23 13c0-1.5-.7-2.8-1.8-3.6A4.5 4.5 0 0 0 18 4.5C18 2.6 16.4 1 14.5 1c-1.9 0-3.5 1.6-3.5 3.5V8"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>
         </button>
+        <button class="act-btn" data-view="mcp" title="MCP 工具">
+          <svg viewBox="0 0 24 24"><circle cx="5" cy="5" r="2.2"/><circle cx="19" cy="5" r="2.2"/><circle cx="12" cy="19" r="2.2"/><path d="M6.7 6.7l3.6 10.1M17.3 6.7l-3.6 10.1"/></svg>
+        </button>
         <button class="act-btn" data-view="settings" title="设置">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.6.9 1 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
         </button>
@@ -258,9 +261,10 @@
           title="拖动调整 Quest 底部输入区高度"
         ></div>
         <div class="quest-composer" id="questComposer">
-          <textarea id="questFollowInput" placeholder="补充说明（可选，写入当前任务备注；主要仍用左侧创建新任务）"></textarea>
+          <textarea id="questFollowInput" placeholder="任务备注（可选）：写入当前任务，显示在看板卡片上"></textarea>
           <div class="quest-composer-row">
             <span style="font-size:11px;color:var(--text-muted)">Enter 不发送 · 用左侧「创建并运行」提交新目标</span>
+            <button class="btn" id="btnQuestRemarkSave">保存备注</button>
             <button class="btn primary" id="btnQuestStart2">启动当前任务</button>
           </div>
         </div>
@@ -304,9 +308,9 @@
 
       <aside class="chat" id="chatPanel">
         <div class="chat-header">
-          <div>
-            <div class="title">AI 助手</div>
-            <div class="sub">Agent · 免费通道</div>
+          <div style="min-width:0">
+            <div class="title" id="chatTitle" title="">AI 助手</div>
+            <div class="sub" id="chatSub">Agent · 可读写文件</div>
           </div>
           <div class="grow"></div>
           <button class="chip" id="modelChip" title="切换模型">model</button>
@@ -355,6 +359,9 @@
             <div class="grow"></div>
             <button type="button" class="tb-mini" id="btnRejectAllChanges" title="回滚本轮全部文件到写前">
               全部撤销
+            </button>
+            <button type="button" class="tb-mini primary" id="btnAcceptAllChanges" title="确认本轮改动并收起面板">
+              确认
             </button>
           </div>
           <div class="chat-changes-list" id="chatChangesList"></div>
@@ -442,7 +449,8 @@
       </header>
       <div class="body">
         <div class="list" id="providerList"></div>
-        <div style="height:12px"></div>
+      </div>
+      <div class="footer">
         <button class="btn primary" id="btnAddProvider">＋ 添加服务商</button>
       </div>
     </div>
@@ -482,8 +490,20 @@
           </select>
         </div>
         <div class="field"><label>Base URL</label><input id="pfBaseUrl" placeholder="https://api.xxx.com/v1" /></div>
-        <div class="field"><label>API Key</label><input id="pfApiKey" type="password" placeholder="sk-... 本地 Ollama 可填 ollama" /></div>
-        <div class="field"><label>模型列表（逗号分隔）</label><input id="pfModels" placeholder="model-a,model-b" /></div>
+        <div class="field">
+          <label>API Key</label>
+          <div class="input-with-toggle">
+            <input id="pfApiKey" type="password" placeholder="sk-... 本地 Ollama 可填 ollama" autocomplete="off" />
+            <button type="button" class="btn-eye" id="btnToggleApiKey" title="显示/隐藏 API Key" aria-label="显示或隐藏 API Key" aria-pressed="false">显示</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>模型列表（逗号分隔）</label>
+          <div class="input-with-toggle input-with-action">
+            <input id="pfModels" placeholder="model-a,model-b" />
+            <button type="button" class="btn-eye" id="btnRefreshModelsInEdit" title="从该服务商 API 拉取模型并填入">刷新并填入</button>
+          </div>
+        </div>
         <div class="field">
           <label>启用</label>
           <select id="pfEnabled">
@@ -509,7 +529,13 @@
         <h3>选择模型</h3>
         <button class="icon-btn" data-close="modalModels">✕</button>
       </header>
-      <div class="body"><div class="list" id="modelList"></div></div>
+      <div class="body">
+        <div class="model-search-wrap">
+          <input id="modelSearch" type="search" placeholder="搜索模型或服务商…" autocomplete="off" />
+          <span id="modelSearchCount" class="model-search-count">0</span>
+        </div>
+        <div class="list" id="modelList"></div>
+      </div>
     </div>
   </div>
 
@@ -660,6 +686,59 @@
     </div>
   </div>
 
+  <div class="modal-backdrop" id="modalMcpEdit">
+    <div class="modal">
+      <header>
+        <h3 id="mcpEditTitle">添加 MCP Server</h3>
+        <button class="icon-btn" data-close="modalMcpEdit">✕</button>
+      </header>
+      <div class="body">
+        <div class="field">
+          <label>预设（一键填充）</label>
+          <select id="mpPreset">
+            <option value="">— 手动填写 —</option>
+            <option value="context7">Context7（文档问答）</option>
+            <option value="filesystem">Filesystem（本机文件）</option>
+            <option value="playwright">Playwright（浏览器自动化）</option>
+            <option value="fetch">Fetch（网页抓取）</option>
+            <option value="memory">Memory（知识图谱）</option>
+            <option value="github">GitHub（HTTP，需 Token）</option>
+          </select>
+        </div>
+        <div class="field"><label>ID（唯一，工具前缀 mcp__&lt;id&gt;__）</label><input id="mpId" placeholder="例如 filesystem" /></div>
+        <div class="field"><label>名称</label><input id="mpName" placeholder="显示名" /></div>
+        <div class="field">
+          <label>类型</label>
+          <select id="mpType">
+            <option value="stdio">stdio（本地命令）</option>
+            <option value="http">HTTP（streamable，远程）</option>
+          </select>
+        </div>
+        <div class="field mcp-field-stdio"><label>命令（Windows 下 npx 自动补 .cmd）</label><input id="mpCommand" placeholder="npx -y @modelcontextprotocol/server-filesystem" /></div>
+        <div class="field mcp-field-stdio"><label>参数（逗号分隔）</label><input id="mpArgs" placeholder="C:/projects" /></div>
+        <div class="field mcp-field-stdio"><label>工作目录 cwd（可留空）</label><input id="mpCwd" placeholder="默认进程 cwd" /></div>
+        <div class="field mcp-field-http"><label>URL（streamable HTTP 端点）</label><input id="mpUrl" placeholder="https://api.example.com/mcp" /></div>
+        <div class="field mcp-field-http"><label>Headers（每行 Name: value）</label><textarea id="mpHeaders" rows="3" placeholder="Authorization: Bearer xxx&#10;X-Custom: 1"></textarea></div>
+        <div class="field"><label>环境变量（每行 KEY=value，可留空）</label><textarea id="mpEnv" rows="3" placeholder="API_KEY=xxx&#10;REGION=cn"></textarea></div>
+        <div class="field"><label>超时（秒，默认 30）</label><input id="mpTimeout" type="number" min="1" max="300" value="30" style="width:120px" /></div>
+        <div class="field">
+          <label>启用</label>
+          <select id="mpEnabled">
+            <option value="true">启用</option>
+            <option value="false">禁用</option>
+          </select>
+        </div>
+        <div class="field" style="font-size:11px;color:var(--text-muted);line-height:1.45">
+          连接成功后，该 server 的工具会自动加入 Agent 可用工具列表（带 mcp__ 前缀）。支持 stdio 与 streamable HTTP；legacy SSE 暂不支持。
+        </div>
+      </div>
+      <div class="footer">
+        <button class="btn" data-close="modalMcpEdit">取消</button>
+        <button class="btn primary" id="btnSaveMcp">保存</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-backdrop" id="modalFileDiff">
     <div class="modal modal-file-diff">
       <header>
@@ -733,12 +812,15 @@
 
   <!-- Styled async confirm dialog (replaces native confirm()) -->
   <div class="modal-backdrop" id="modalConfirm">
-    <div class="modal" style="max-width:400px">
-      <div class="modal-header"><span class="modal-title">确认操作</span></div>
-      <div class="modal-body">
-        <p id="modalConfirmMsg" style="margin:0;white-space:pre-wrap;word-break:break-word"></p>
+    <div class="modal modal-confirm">
+      <header>
+        <h3>确认操作</h3>
+        <button class="icon-btn" data-close="modalConfirm">✕</button>
+      </header>
+      <div class="body">
+        <p id="modalConfirmMsg" class="confirm-msg"></p>
       </div>
-      <div class="modal-footer" style="gap:8px">
+      <div class="footer">
         <button class="btn" id="modalConfirmCancel">取消</button>
         <button class="btn primary" id="modalConfirmOk">确认</button>
       </div>
@@ -756,6 +838,7 @@
   <script src="js/dom-util.js"></script>
   <script src="js/resize-columns.js"></script>
   <script src="js/monaco-setup.js"></script>
+  <script src="js/lang-suggest.js"></script>
   <script src="js/lsp-host.js"></script>
   <script src="js/editor-host.js"></script>
   <script src="js/panels.js"></script>

@@ -113,6 +113,27 @@
   overflow: hidden;
 }
 
+.quest-card .r {
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--warning);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quest-card .card-actions {
+  margin-top: 6px;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.quest-card .card-actions .tb-mini {
+  height: 20px;
+  padding: 0 8px;
+  font-size: 10.5px;
+}
+
 .quest-card .meta {
   margin-top: 6px;
   display: flex;

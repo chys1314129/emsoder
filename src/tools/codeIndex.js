@@ -10,6 +10,10 @@ const CODE_EXTS = new Set([
   ".mjs",
   ".cjs",
   ".json",
+  ".css",
+  ".scss",
+  ".html",
+  ".htm",
 ]);
 
 /**

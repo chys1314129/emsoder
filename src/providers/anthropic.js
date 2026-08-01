@@ -274,9 +274,11 @@ async function chatAnthropicOnce(provider, req) {
   if (system) body.system = system;
 
   const timeoutMs = req.timeoutMs ?? provider.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const maxRetries =
+    req.maxRetries != null ? Math.max(0, Number(req.maxRetries) || 0) : MAX_RETRIES;
   let lastErr = null;
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const { signal, cleanup } = mergeAbortSignals(req.signal, timeoutMs);
     try {
       const res = await fetch(url, {
@@ -288,7 +290,7 @@ async function chatAnthropicOnce(provider, req) {
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         cleanup();
-        if (attempt < MAX_RETRIES && isRetryableError(null, res.status)) {
+        if (attempt < maxRetries && isRetryableError(null, res.status)) {
           await sleep(500 * (attempt + 1), req.signal);
           continue;
         }
@@ -310,8 +312,30 @@ async function chatAnthropicOnce(provider, req) {
     } catch (err) {
       cleanup();
       lastErr = err;
-      if (err?.name === "AbortError" || req.signal?.aborted) throw err;
-      if (attempt < MAX_RETRIES && isRetryableError(err)) {
+      const name = err?.name || "";
+      const msg = String(err?.message || err || "");
+      if (
+        name === "AbortError" ||
+        name === "TimeoutError" ||
+        req.signal?.aborted ||
+        /timeout|aborted/i.test(msg)
+      ) {
+        throw Object.assign(
+          new Error(
+            name === "TimeoutError" || /timeout/i.test(msg)
+              ? `请求超时（${Math.round(timeoutMs / 1000)}s）`
+              : "已停止"
+          ),
+          {
+            name:
+              name === "TimeoutError" || /timeout/i.test(msg)
+                ? "TimeoutError"
+                : "AbortError",
+            cause: err,
+          }
+        );
+      }
+      if (attempt < maxRetries && isRetryableError(err)) {
         await sleep(400 * (attempt + 1), req.signal);
         continue;
       }

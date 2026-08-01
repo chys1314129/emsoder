@@ -424,9 +424,9 @@ body.row-resizing .xterm-host {
   border-bottom: 1px solid var(--border-soft);
 }
 .tb-mini.primary {
-  background: linear-gradient(180deg, var(--sky-400), var(--sky-600));
+  background: linear-gradient(180deg, var(--g-blue, var(--sky-400)), var(--g-blue-d, var(--sky-600)));
   border-color: transparent;
-  color: #041018;
+  color: #fff;
   font-weight: 700;
 }
 .debug-section-title {

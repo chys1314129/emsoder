@@ -44,6 +44,8 @@
     let end = 0;
     let raf = 0;
     let stickBottom = true;
+    let prefix = [0];
+    let nodeCache = new Map();
 
     const top = document.createElement("div");
     top.className = "vlist-spacer vlist-top";
@@ -67,9 +69,15 @@
       container.addEventListener("scroll", onScroll, { passive: true });
     }
 
+    // 高度前缀和：findStart / topH / botH 从 O(n) 降到 O(log n)/O(1)
+    function rebuildPrefix() {
+      prefix = new Array(heights.length + 1);
+      prefix[0] = 0;
+      for (let i = 0; i < heights.length; i++) prefix[i + 1] = prefix[i] + heights[i];
+    }
+
     function recomputeTotal() {
-      total = 0;
-      for (let i = 0; i < heights.length; i++) total += heights[i];
+      total = prefix[heights.length] ?? 0;
     }
 
     function measureMounted() {
@@ -83,17 +91,30 @@
           heights[idx] = h;
         }
       }
-      recomputeTotal();
+      rebuildPrefix();
     }
 
     function findStart(scrollTop) {
-      let acc = 0;
-      for (let i = 0; i < heights.length; i++) {
-        const next = acc + heights[i];
-        if (next > scrollTop) return i;
-        acc = next;
+      // 二分：最大的 i 使 prefix[i] <= scrollTop
+      let lo = 0;
+      let hi = heights.length;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (prefix[mid] <= scrollTop) lo = mid;
+        else hi = mid - 1;
       }
-      return Math.max(0, heights.length - 1);
+      return Math.min(lo, Math.max(0, heights.length - 1));
+    }
+
+    // 按 message id 缓存渲染节点：窗口滚动时复用，避免重跑 markdown
+    function cachedRender(item, i) {
+      const key = item?.id || `i${i}`;
+      let node = nodeCache.get(key);
+      if (!node) {
+        node = renderItem(item, i);
+        nodeCache.set(key, node);
+      }
+      return node;
     }
 
     function layout() {
@@ -109,8 +130,6 @@
       const scrollTop = container.scrollTop;
       let s = findStart(scrollTop);
       s = Math.max(0, s - OVERSCAN);
-      let acc = 0;
-      for (let i = 0; i < s; i++) acc += heights[i];
       let e = s;
       let used = 0;
       while (e < items.length && used < viewH + OVERSCAN * 60) {
@@ -119,10 +138,8 @@
       }
       e = Math.min(items.length, e + OVERSCAN);
 
-      let topH = 0;
-      for (let i = 0; i < s; i++) topH += heights[i];
-      let botH = 0;
-      for (let i = e; i < items.length; i++) botH += heights[i];
+      const topH = prefix[s] || 0;
+      const botH = total - (prefix[e] ?? 0);
 
       const needRebuild = s !== start || e !== end || windowEl.childElementCount !== e - s;
       start = s;
@@ -134,7 +151,7 @@
         windowEl.innerHTML = "";
         const frag = document.createDocumentFragment();
         for (let i = s; i < e; i++) {
-          const node = renderItem(items[i], i);
+          const node = cachedRender(items[i], i);
           if (!node) continue;
           const el = node.nodeType === 1 ? node : node;
           const wrap = el.closest?.(".msg") || el;
@@ -149,10 +166,8 @@
         windowEl.appendChild(frag);
         requestAnimationFrame(() => {
           measureMounted();
-          top.style.height =
-            heights.slice(0, start).reduce((a, b) => a + b, 0) + "px";
-          bottom.style.height =
-            heights.slice(end).reduce((a, b) => a + b, 0) + "px";
+          top.style.height = (prefix[start] || 0) + "px";
+          bottom.style.height = (total - (prefix[end] ?? 0)) + "px";
         });
       }
     }
@@ -173,6 +188,8 @@
       live.innerHTML = "";
       items = Array.isArray(list) ? list : [];
       heights = items.map((m) => estimateHeight(m));
+      nodeCache = new Map();
+      rebuildPrefix();
       recomputeTotal();
       if (!items.length) {
         container.dataset.vlist = "";
@@ -197,16 +214,14 @@
       if (!items.length) return false;
       const idx = Math.max(0, Math.min(items.length - 1, Number(index) || 0));
       ensureSkeleton();
-      let topH = 0;
-      for (let i = 0; i < idx; i++) topH += heights[i] || 0;
+      let topH = prefix[idx] || 0;
       stickBottom = false;
       container.scrollTop = Math.max(0, topH - 8);
       layout();
       // second pass after paint so measured heights refine position
       requestAnimationFrame(() => {
         measureMounted();
-        let refined = 0;
-        for (let i = 0; i < idx; i++) refined += heights[i] || 0;
+        const refined = prefix[idx] || 0;
         container.scrollTop = Math.max(0, refined - 8);
         layout();
         const el = windowEl.querySelector(`[data-vidx="${idx}"]`);

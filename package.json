@@ -1,7 +1,7 @@
 {
   "name": "emsoder-desktop",
   "productName": "EMSoder",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "EMSoder desktop — Quest-first UI (board / stream / review), free custom models",
   "main": "src/main/main.js",
   "author": "EMSoder",
@@ -17,7 +17,11 @@
     "test:skills": "node scripts/test-skills.js",
     "test:skill-install": "node scripts/test-skill-install.js",
     "test:apply-diff": "node scripts/test-apply-diff.js",
+    "test:file-changes": "node scripts/test-file-changes.js",
+    "test:session": "node scripts/test-session.js",
+    "test:mcp": "node scripts/test-mcp.js",
     "test:memory": "node scripts/test-memory.js",
+    "test:providers": "node scripts/test-providers.js",
     "fix-pty": "node scripts/fix-pty.js",
     "postinstall": "node scripts/fix-pty.js || echo fix-pty skipped",
     "sync-skills": "node scripts/sync-bundled-skills.js",
@@ -60,17 +64,23 @@
       {
         "from": "resources/core-skills",
         "to": "core-skills",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "resources/bundled-skills",
         "to": "bundled-skills",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "resources/skill-runtime",
         "to": "skill-runtime",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "asarUnpack": [

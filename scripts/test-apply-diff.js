@@ -94,10 +94,19 @@ first
   body = await fs.readFile(abs, "utf8");
   assert(body.startsWith("first\n"), "marker replace");
 
-  // unique match required
+  // unique match required; validation failure must not ask for confirmation
   await fs.writeFile(abs, "x\nx\n", "utf8");
+  let confirmCalls = 0;
+  const countConfirmCtx = {
+    workspaceRoot: root,
+    cfg: {},
+    confirm: async () => {
+      confirmCalls += 1;
+      return true;
+    },
+  };
   out = await executeTool(
-    ctx,
+    countConfirmCtx,
     "apply_diff",
     JSON.stringify({
       path: rel,
@@ -105,11 +114,12 @@ first
     })
   );
   assert(!out.ok && /matched 2 times/i.test(out.content), "should reject non-unique");
+  assert(confirmCalls === 0, "non-unique hunk should not call confirm");
 
-  // missing old_string leaves file unchanged
+  // missing old_string leaves file unchanged and must not ask for confirmation
   await fs.writeFile(abs, "only\n", "utf8");
   out = await executeTool(
-    ctx,
+    countConfirmCtx,
     "apply_diff",
     JSON.stringify({
       path: rel,
@@ -117,6 +127,7 @@ first
     })
   );
   assert(!out.ok && /not found/i.test(out.content), "should reject missing");
+  assert(confirmCalls === 0, "missing hunk should not call confirm");
   body = await fs.readFile(abs, "utf8");
   assert(body === "only\n", "file must stay unchanged on failure");
 
@@ -135,10 +146,12 @@ first
   assert(body === "beta\n", "beta written");
 
   // denied when no auto flags
+  let deniedFsChanges = 0;
   const denyCtx = {
     workspaceRoot: root,
     cfg: {},
     confirm: async () => false,
+    onFsChange: () => { deniedFsChanges += 1; },
   };
   await fs.writeFile(abs, "gamma\n", "utf8");
   out = await executeTool(
@@ -150,6 +163,7 @@ first
     })
   );
   assert(!out.ok && out.needConfirm, "should need confirm when denied");
+  assert(deniedFsChanges === 0, "denied apply_diff must not call onFsChange");
   body = await fs.readFile(abs, "utf8");
   assert(body === "gamma\n", "denied write must not change file");
 

@@ -34,6 +34,7 @@ const { PtyBridge } = require("./ptyBridge");
 const { NodeDebugger } = require("./debugger");
 const { QuestStore } = require("../agent/questStore");
 const { QuestRunner } = require("../agent/questRunner");
+const { McpManager } = require("../mcp/manager");
 const { runAgentTurn } = require("./agentBridge");
 const {
   tracker: contextStats,
@@ -51,6 +52,7 @@ let nodeDebugger = null;
 let questStore = null;
 let questRunner = null;
 let memoryStore = null;
+let mcpManager = null;
 /** pending confirmations from agent tools */
 const pendingConfirms = new Map();
 let isQuitting = false;
@@ -268,7 +270,7 @@ function buildMenu() {
           click: async () => {
             const p = getActiveProvider(cfg);
             if (!p) return;
-            const r = await testProvider(cfg, p);
+            const r = await raceTimeout(testProvider(cfg, p), 16000, "测试");
             dialog.showMessageBox(mainWindow, {
               type: r.ok ? "info" : "error",
               title: "测试结果",
@@ -334,8 +336,6 @@ function registerIpc() {
       createdAt: s.createdAt,
       // active branch path for UI (linear view of current branch)
       messages: path,
-      // full tree for advanced UI / debugging
-      treeMessages: s.messages,
       branchMeta,
       // 本轮写盘摘要（无 before/after 正文）
       fileChanges: sessions.publicFileChanges(s),
@@ -385,6 +385,13 @@ function registerIpc() {
         /* ignore */
       }
     }
+    if (patch && "mcpServers" in patch && mcpManager) {
+      try {
+        mcpManager.reload(cfg);
+      } catch {
+        /* ignore */
+      }
+    }
     return publicConfig(cfg);
   });
 
@@ -392,11 +399,27 @@ function registerIpc() {
   ipcMain.handle("providers:enabled", () => getEnabledProviders(cfg));
 
   ipcMain.handle("providers:upsert", (_e, provider) => {
-    const list = getProviders(cfg);
-    const idx = list.findIndex((p) => p.id === provider.id);
-    if (idx >= 0) list[idx] = provider;
-    else list.push(provider);
-    cfg.providers = list;
+    const rawList = Array.isArray(cfg.providers) ? cfg.providers : [];
+    const idx = rawList.findIndex((p) => p && p.id === provider.id);
+    const normalized = {
+      id: provider.id,
+      name: provider.name || provider.id,
+      type: provider.type === "anthropic" ? "anthropic" : "openai",
+      baseUrl: String(provider.baseUrl || "").replace(/\/+$/, ""),
+      apiKey: provider.apiKey || "",
+      models: Array.isArray(provider.models) ? provider.models : [],
+      enabled: provider.enabled !== false,
+    };
+    if (provider.headers) normalized.headers = provider.headers;
+    if (provider.chatPath) normalized.chatPath = provider.chatPath;
+    if (provider.timeoutMs != null) normalized.timeoutMs = provider.timeoutMs;
+    if (idx >= 0) {
+      // 合并 raw provider，避免丢失手动写入的 headers/chatPath/timeoutMs 等扩展字段
+      rawList[idx] = { ...rawList[idx], ...normalized };
+    } else {
+      rawList.push(normalized);
+    }
+    cfg.providers = rawList;
     saveConfig(cfg);
     return publicConfig(cfg);
   });
@@ -414,27 +437,174 @@ function registerIpc() {
     return publicConfig(cfg);
   });
 
+  /** 主进程侧硬超时，确保 IPC 一定会返回，按钮不会永远转圈 */
+  function raceTimeout(promise, ms, label) {
+    const timeoutMs = Math.max(3000, Number(ms) || 15000);
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        reject(
+          new Error(
+            `${label || "请求"}超时（${Math.round(timeoutMs / 1000)}s），请检查 Base URL / 网络 / API Key`
+          )
+        );
+      }, timeoutMs);
+    });
+    return Promise.race([Promise.resolve(promise), timeout]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+  }
+
   ipcMain.handle("providers:test", async (_e, providerId) => {
-    const p =
-      getProviders(cfg).find((x) => x.id === providerId) ||
-      getActiveProvider(cfg);
-    if (!p) return { ok: false, message: "no provider", latencyMs: 0 };
-    return testProvider(cfg, p);
+    try {
+      const p =
+        getProviders(cfg).find((x) => x.id === providerId) ||
+        getActiveProvider(cfg);
+      if (!p) return { ok: false, message: "未找到服务商", latencyMs: 0 };
+      // 用配置里的完整 provider（含 apiKey）
+      const full = getProviders(cfg).find((x) => x.id === p.id) || p;
+      // 整段最多 16s，保证渲染进程能收到结果
+      return await raceTimeout(testProvider(cfg, full), 16000, "测试");
+    } catch (err) {
+      return {
+        ok: false,
+        message: err?.message || String(err) || "测试失败",
+        latencyMs: 0,
+      };
+    }
   });
 
   ipcMain.handle("providers:refresh-models", async (_e, providerId) => {
     const list = getProviders(cfg);
+    // 注意：cfg.providers 是源数据；getProviders 是映射副本。写回要用 cfg.providers
+    const rawList = Array.isArray(cfg.providers) ? cfg.providers : [];
+    const raw = rawList.find((x) => x && x.id === providerId);
     const p = list.find((x) => x.id === providerId);
-    if (!p) throw new Error("provider not found");
-    const models = await listRemoteModels(p);
-    p.models = models.slice(0, 100);
-    cfg.providers = list;
-    saveConfig(cfg);
-    return p;
+    if (!raw || !p) {
+      return { ok: false, error: "未找到服务商", models: [] };
+    }
+    try {
+      const models = await raceTimeout(
+        listRemoteModels(p),
+        15000,
+        "刷新模型"
+      );
+      raw.models = (models || []).slice(0, 100);
+      cfg.providers = rawList;
+      saveConfig(cfg);
+      return {
+        ok: true,
+        id: raw.id,
+        name: raw.name || raw.id,
+        type: raw.type === "anthropic" ? "anthropic" : "openai",
+        baseUrl: String(raw.baseUrl || "").replace(/\/+$/, ""),
+        models: Array.isArray(raw.models) ? raw.models : [],
+        enabled: raw.enabled !== false,
+      };
+    } catch (err) {
+      // 失败时不 throw：始终返回结构化结果，前端 finally 一定能复位按钮
+      if (Array.isArray(err?.fallbackModels) && err.fallbackModels.length) {
+        raw.models = err.fallbackModels.slice(0, 100);
+        cfg.providers = rawList;
+        saveConfig(cfg);
+      }
+      return {
+        ok: false,
+        error: err?.message || String(err) || "刷新模型失败",
+        id: raw.id,
+        name: raw.name || raw.id,
+        models: Array.isArray(raw.models) ? raw.models : [],
+      };
+    }
   });
 
   ipcMain.handle("workspace:open", () => openWorkspace());
   ipcMain.handle("workspace:get", () => cfg.lastWorkspace || "");
+
+  // ── MCP ────────────────────────────────────────────────────────────
+  function mcpServerList() {
+    return Array.isArray(mcpManager?.list?.()) ? mcpManager.list() : [];
+  }
+
+  ipcMain.handle("mcp:list", () => ({ ok: true, servers: mcpServerList() }));
+
+  ipcMain.handle("mcp:upsert", (_e, server = {}) => {
+    const id = String(server.id || "").trim();
+    const command = String(server.command || "").trim();
+    const url = String(server.url || "").trim();
+    if (!id || (!command && !url)) return { ok: false, error: "需要 id 以及命令或 URL" };
+    const rawList = Array.isArray(cfg.mcpServers) ? cfg.mcpServers : [];
+    const hasCmd = command !== "";
+    const hasUrl = url !== "";
+    const type =
+      server.type === "http" || server.type === "stdio"
+        ? server.type
+        : hasUrl && !hasCmd
+          ? "http"
+          : hasCmd && !hasUrl
+            ? "stdio"
+            : "http";
+    const timeoutMs = Number(server.timeoutMs);
+    const normalized = {
+      id,
+      name: String(server.name || id).trim() || id,
+      type,
+      command: type === "stdio" ? command : "",
+      args: Array.isArray(server.args)
+        ? server.args.filter((a) => typeof a === "string")
+        : [],
+      cwd: String(server.cwd || ""),
+      env:
+        server.env && typeof server.env === "object" && !Array.isArray(server.env)
+          ? server.env
+          : {},
+      url: type === "http" ? url : "",
+      headers:
+        server.headers && typeof server.headers === "object" && !Array.isArray(server.headers)
+          ? server.headers
+          : {},
+      enabled: server.enabled !== false,
+      timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? Math.min(300_000, Math.max(1_000, Math.round(timeoutMs)))
+        : 30_000,
+    };
+    const idx = rawList.findIndex((p) => p && p.id === id);
+    if (idx >= 0) rawList[idx] = normalized;
+    else rawList.push(normalized);
+    cfg.mcpServers = rawList;
+    saveConfig(cfg);
+    try {
+      mcpManager?.reload(cfg);
+    } catch { /* ignore */ }
+    return { ok: true, servers: mcpServerList() };
+  });
+
+  ipcMain.handle("mcp:remove", (_e, id) => {
+    cfg.mcpServers = (Array.isArray(cfg.mcpServers) ? cfg.mcpServers : []).filter(
+      (p) => p && p.id !== id
+    );
+    saveConfig(cfg);
+    try {
+      mcpManager?.reload(cfg);
+    } catch { /* ignore */ }
+    return { ok: true, servers: mcpServerList() };
+  });
+
+  ipcMain.handle("mcp:connect", async (_e, id) => {
+    try {
+      await mcpManager?.connect(id);
+      return { ok: true, servers: mcpServerList() };
+    } catch (e) {
+      return { ok: false, error: e.message || String(e), servers: mcpServerList() };
+    }
+  });
+
+  ipcMain.handle("mcp:disconnect", (_e, id) => {
+    try {
+      mcpManager?.disconnect(id);
+    } catch { /* ignore */ }
+    return { ok: true, servers: mcpServerList() };
+  });
 
   /** Walk workspace for @-mention autocomplete (lightweight: paths + dirs). */
   ipcMain.handle("fs:walk-files", async (_e, opts = {}) => {
@@ -669,26 +839,33 @@ function registerIpc() {
   });
 
 
-  ipcMain.handle("session:list", () =>
-    sessions.list().map((s) => ({
+  function sessionListItems() {
+    return sessions.list().map((s) => ({
       id: s.id,
       title: s.title,
       updatedAt: s.updatedAt,
       createdAt: s.createdAt,
-      messageCount: Array.isArray(s.messages) ? s.messages.length : 0,
-    }))
-  );
+      mode: s.mode || "agent",
+      messageCount: sessions.visibleMessageCount(s),
+    }));
+  }
+
+  ipcMain.handle("session:list", () => sessionListItems());
+  ipcMain.handle("session:rename", (_e, { id, title } = {}) => {
+    const s = sessions.rename(id, title);
+    if (!s) return { ok: false, error: "会话不存在" };
+    return {
+      ok: true,
+      session: publicSession(s),
+      sessions: sessionListItems(),
+    };
+  });
   ipcMain.handle("session:remove", (_e, id) => {
     const r = sessions.remove(id);
     return {
       ...r,
       session: publicSession(sessions.getActive()),
-      sessions: sessions.list().map((s) => ({
-        id: s.id,
-        title: s.title,
-        updatedAt: s.updatedAt,
-        messageCount: Array.isArray(s.messages) ? s.messages.length : 0,
-      })),
+      sessions: sessionListItems(),
     };
   });
   ipcMain.handle("session:remove-many", (_e, ids) => {
@@ -696,12 +873,7 @@ function registerIpc() {
     return {
       ...r,
       session: publicSession(sessions.getActive()),
-      sessions: sessions.list().map((s) => ({
-        id: s.id,
-        title: s.title,
-        updatedAt: s.updatedAt,
-        messageCount: Array.isArray(s.messages) ? s.messages.length : 0,
-      })),
+      sessions: sessionListItems(),
     };
   });
   ipcMain.handle("session:get", () => publicSession(sessions.getActive()));
@@ -747,16 +919,24 @@ function registerIpc() {
     if (chatQueueBusy) return;
     chatQueueBusy = true;
     emitChatQueueStatus();
-    while (chatJobQueue.length) {
-      const job = chatJobQueue.shift();
-      emitChatQueueStatus();
-      try {
-        const result = await job.runFn();
-        job.resolve(result);
-      } catch (e) {
-        job.reject(e);
+    // 运行中加大写盘防抖，减少主线程阻塞
+    sessions?.setDebounceMs?.(2000);
+    questStore?.setDebounceMs?.(2000);
+    try {
+      while (chatJobQueue.length) {
+        const job = chatJobQueue.shift();
+        emitChatQueueStatus();
+        try {
+          const result = await job.runFn();
+          job.resolve(result);
+        } catch (e) {
+          job.reject(e);
+        }
+        emitChatQueueStatus();
       }
-      emitChatQueueStatus();
+    } finally {
+      sessions?.setDebounceMs?.(450);
+      questStore?.setDebounceMs?.(400);
     }
     chatQueueBusy = false;
     emitChatQueueStatus();
@@ -859,15 +1039,19 @@ function registerIpc() {
     running: !!(runner.isRunning || chatQueueBusy),
   }));
 
+  function targetSession(sessionId) {
+    return sessions.getById?.(sessionId) || sessions.getActive();
+  }
+
   /** Chat 本轮文件变更摘要（不含正文） */
-  ipcMain.handle("agent:file-changes", () => ({
+  ipcMain.handle("agent:file-changes", (_e, { sessionId } = {}) => ({
     ok: true,
-    fileChanges: sessions.publicFileChanges(),
+    fileChanges: sessions.publicFileChanges(sessionId),
   }));
 
   /** 单文件写前/写后 + 简易 diff（按需拉取，避免列表 IPC 爆炸） */
-  ipcMain.handle("agent:file-change-diff", (_e, { path: filePath } = {}) => {
-    const body = sessions.getFileChangeBodies(filePath);
+  ipcMain.handle("agent:file-change-diff", (_e, { path: filePath, sessionId } = {}) => {
+    const body = sessions.getFileChangeBodies(filePath, 120_000, sessionId);
     if (!body) return { ok: false, error: "未找到该文件的本轮快照" };
     return {
       ok: true,
@@ -877,22 +1061,32 @@ function registerIpc() {
   });
 
   /** 回滚单个文件到本轮写前 */
-  ipcMain.handle("agent:reject-change", async (_e, { path: filePath } = {}) => {
-    const r = await runner.applyReject(filePath);
+  ipcMain.handle("agent:reject-change", async (_e, { path: filePath, sessionId } = {}) => {
+    const r = await runner.applyReject(filePath, sessionId);
     return {
       ...r,
-      fileChanges: sessions.publicFileChanges(),
-      session: publicSession(sessions.getActive()),
+      fileChanges: sessions.publicFileChanges(sessionId),
+      session: publicSession(targetSession(sessionId)),
     };
   });
 
   /** 一键回滚本轮全部未撤销变更 */
-  ipcMain.handle("agent:reject-all-changes", async () => {
-    const r = await runner.applyRejectAll();
+  ipcMain.handle("agent:reject-all-changes", async (_e, { sessionId } = {}) => {
+    const r = await runner.applyRejectAll(sessionId);
     return {
       ...r,
-      fileChanges: sessions.publicFileChanges(),
-      session: publicSession(sessions.getActive()),
+      fileChanges: sessions.publicFileChanges(sessionId),
+      session: publicSession(targetSession(sessionId)),
+    };
+  });
+
+  /** 确认本轮改动并清空摘要（不回滚） */
+  ipcMain.handle("agent:accept-all-changes", (_e, { sessionId } = {}) => {
+    sessions.clearFileChanges(sessionId);
+    return {
+      ok: true,
+      fileChanges: sessions.publicFileChanges(sessionId),
+      session: publicSession(targetSession(sessionId)),
     };
   });
 
@@ -1477,12 +1671,61 @@ function registerIpc() {
   }));
 
   // ---- Quest (goal-driven tasks) ----
+  /** quest 对象瘦身：fileChanges 去 before/after 正文（对齐 Chat 模式） */
+  function publicQuest(q) {
+    if (!q) return null;
+    return { ...q, fileChanges: questStore.publicFileChanges(q) };
+  }
+
+  /**
+   * quest 事件发送器：delta 流式文本 80ms 批处理合并，
+   * 其他事件（status/step/done 等）立即发送。
+   */
+  const questDeltaBatch = new Map(); // questId -> { buf, timer }
+  function makeQuestEventSender(questId) {
+    return (ev) => {
+      if (mainWindow?.isDestroyed()) return;
+      if (ev?.type !== "delta") {
+        flushQuestDelta(questId);
+        mainWindow.webContents.send("quest:event", ev);
+        return;
+      }
+      let b = questDeltaBatch.get(questId);
+      if (!b) {
+        b = { buf: "", timer: null };
+        questDeltaBatch.set(questId, b);
+      }
+      b.buf += ev.text || "";
+      if (b.buf.length >= 4096) {
+        flushQuestDelta(questId);
+        return;
+      }
+      if (!b.timer) {
+        b.timer = setTimeout(() => flushQuestDelta(questId), 80);
+      }
+    };
+  }
+  function flushQuestDelta(questId) {
+    const b = questDeltaBatch.get(questId);
+    if (!b) return;
+    questDeltaBatch.delete(questId);
+    if (b.timer) clearTimeout(b.timer);
+    if (b.buf && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("quest:event", {
+        type: "delta",
+        questId,
+        text: b.buf,
+      });
+    }
+  }
+
   ipcMain.handle("quest:list", () => questStore.list().map((q) => ({
     id: q.id,
     title: q.title,
     goal: q.goal,
     mode: q.mode,
     status: q.status,
+    remark: q.remark || "",
     workspace: q.workspace,
     model: q.model,
     progress: q.progress,
@@ -1495,8 +1738,8 @@ function registerIpc() {
     changeCount: (q.fileChanges || []).filter((f) => !f.rejected).length,
   })));
   ipcMain.handle("quest:board", () => questStore.listByStatus());
-  ipcMain.handle("quest:get", (_e, id) => questStore.get(id));
-  ipcMain.handle("quest:get-active", () => questStore.getActive());
+  ipcMain.handle("quest:get", (_e, id) => publicQuest(questStore.get(id)));
+  ipcMain.handle("quest:get-active", () => publicQuest(questStore.getActive()));
   ipcMain.handle("quest:set-active", (_e, id) => questStore.setActive(id));
   ipcMain.handle("quest:create", (_e, payload) => {
     return questStore.create({
@@ -1509,7 +1752,7 @@ function registerIpc() {
     });
   });
   ipcMain.handle("quest:update", (_e, { id, patch }) =>
-    questStore.update(id, patch || {})
+    publicQuest(questStore.update(id, patch || {}))
   );
   ipcMain.handle("quest:remove", (_e, id) => {
     if (questRunner.isRunning(id)) questRunner.stop(id);
@@ -1520,15 +1763,18 @@ function registerIpc() {
     if (!qid) throw new Error("无活动 Quest");
     // fire and forget — progress via events
     setImmediate(() => {
+      questStore?.setDebounceMs?.(2000);
+      const restoreDebounce = () => {
+        try { questStore?.setDebounceMs?.(400); } catch { /* ignore */ }
+      };
       questRunner
         .start(
           cfg,
           qid,
           {
             onEvent: (ev) => {
-              if (!mainWindow?.isDestroyed()) {
-                mainWindow.webContents.send("quest:event", ev);
-              }
+              if (ev?.type === "done" || ev?.type === "error") restoreDebounce();
+              makeQuestEventSender(qid)(ev);
             },
           },
           {
@@ -1537,6 +1783,7 @@ function registerIpc() {
           }
         )
         .catch((err) => {
+          restoreDebounce();
           if (!mainWindow?.isDestroyed()) {
             mainWindow.webContents.send("quest:event", {
               type: "error",
@@ -1794,6 +2041,7 @@ function publicConfig(c) {
     skillsDisabled: Array.isArray(c.skillsDisabled) ? c.skillsDisabled : [],
     memoriesEnabled: c.memoriesEnabled === true,
     memoriesMaxCount: c.memoriesMaxCount ?? 500,
+    mcpServers: Array.isArray(c.mcpServers) ? c.mcpServers : [],
     wordWrap: c.wordWrap || "off",
     minimap: !!c.minimap,
     contextWindow: c.contextWindow || 0,
@@ -1817,10 +2065,30 @@ if (gotLock) {
     createWindow();
 
     sessions = new SessionStore();
-    runner = new AgentRunner(sessions);
+    mcpManager = new McpManager({
+      onEvent: (data) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("mcp:event", data);
+        }
+      },
+    });
+    mcpManager.startAll(cfg);
     memoryStore = new MemoryStore(cfg);
+    runner = new AgentRunner(sessions, memoryStore, mcpManager);
     questStore = new QuestStore();
-    questRunner = new QuestRunner(questStore);
+    questRunner = new QuestRunner(questStore, memoryStore, mcpManager);
+    // 崩溃恢复：上次异常退出可能留下 running 状态的 quest，重启后复位为 error
+    try {
+      for (const q of questStore.list()) {
+        if (q.status === "running") {
+          questStore.update(q.id, {
+            status: "error",
+            error: "上次运行被中断",
+            finishedAt: Date.now(),
+          });
+        }
+      }
+    } catch { /* ignore */ }
     terminals = new TerminalManager();
     ptyBridge = new PtyBridge(terminals);
     nodeDebugger = new NodeDebugger();
@@ -1885,12 +2153,18 @@ if (gotLock) {
     } catch {
       /* ignore */
     }
+    try {
+      mcpManager?.stopAll?.();
+    } catch {
+      /* ignore */
+    }
   });
 
   app.on("window-all-closed", () => {
     terminals?.disposeAll();
     nodeDebugger?.stop?.();
     questRunner?.stopAll?.();
+    mcpManager?.stopAll?.();
     if (process.platform !== "darwin") app.quit();
   });
 }

@@ -47,8 +47,10 @@ function resolveQuestModel(cfg, quest, provider) {
  * Phases: plan -> execute (agent or experts) -> ready for review
  */
 class QuestRunner {
-  constructor(questStore) {
+  constructor(questStore, memoryStore = null, mcpManager = null) {
     this.store = questStore;
+    this.memoryStore = memoryStore;
+    this.mcpManager = mcpManager;
     /** @type {Map<string, AbortController>} */
     this.aborts = new Map();
   }
@@ -131,6 +133,20 @@ class QuestRunner {
       // stash on events bridges via local closure for tool loop
       this._questSkillCatalog = skillCatalog;
       this._questSkillsText = skillsText;
+
+      // ---- Long-term memory: 按目标检索相关记忆注入系统提示 ----
+      let memoryText = "";
+      if (this.memoryStore && cfg.memoriesEnabled === true) {
+        try {
+          const hits = this.memoryStore.search(quest.goal, { topK: 5 });
+          if (hits.length) {
+            memoryText = hits
+              .map((h) => `- ${h.content}${h.tags?.length ? ` [tags: ${h.tags.join(", ")}]` : ""}`)
+              .join("\n");
+          }
+        } catch { /* ignore memory retrieval errors - never block the quest */ }
+      }
+      this._questMemoryText = memoryText;
 
       // ---- Phase 1: Plan ----
       const planStep = this.store.appendStep(questId, {
@@ -216,6 +232,12 @@ class QuestRunner {
       });
       emit("status", { status: "ready", progress: 100 });
       emit("done", { status: "ready" });
+      // Fire-and-forget: 从本次 Quest 提取长期记忆（不阻塞 UI）
+      if (this.memoryStore && cfg.memoriesEnabled === true) {
+        try {
+          this.memoryStore.extractFromSession(q, cfg).catch(() => { /* ignore */ });
+        } catch { /* ignore */ }
+      }
     } catch (err) {
       if (signal.aborted || err?.message === "aborted") {
         emit("status", { status: "cancelled" });
@@ -463,7 +485,8 @@ class QuestRunner {
       expert,
       provider,
       model,
-      skillsText
+      skillsText,
+      this._questMemoryText || ""
     );
 
     const messages = [
@@ -486,6 +509,7 @@ class QuestRunner {
       confirm: bridges.confirm || (async () => true),
       ptyBridge: bridges.ptyBridge || null,
       skillCatalog: this._questSkillCatalog || null,
+      mcpManager: this.mcpManager || null,
       onFsChange: async (filePath, kind) => {
         await this._captureChange(questId, workspaceRoot, filePath, kind);
         events.onEvent?.({
@@ -536,7 +560,10 @@ class QuestRunner {
         provider,
         model,
         messages,
-        tools: AGENT_TOOLS,
+        tools:
+          AGENT_TOOLS.concat(
+            this.mcpManager?.getTools ? this.mcpManager.getTools() : []
+          ),
         signal,
         temperature: cfg.temperature ?? 0.2,
         maxTokens: cfg.maxTokens ?? 8192,
@@ -619,11 +646,22 @@ class QuestRunner {
           }
         }
 
-        const result = await executeTool(
-          toolCtx,
-          call.function.name,
-          call.function.arguments
-        );
+        let result;
+        if (
+          String(call.function.name || "").startsWith("mcp__") &&
+          toolCtx.mcpManager
+        ) {
+          result = await toolCtx.mcpManager.callTool(
+            call.function.name,
+            call.function.arguments
+          );
+        } else {
+          result = await executeTool(
+            toolCtx,
+            call.function.name,
+            call.function.arguments
+          );
+        }
         const content = String(result.content || "").slice(0, 50_000);
 
         if (
@@ -738,12 +776,44 @@ class QuestRunner {
     if (!q) throw new Error("Quest 不存在");
     const row = q.fileChanges.find((f) => f.path === filePath);
     if (!row) throw new Error("未找到变更");
+    if (row.rejected) return { ok: true, already: true };
+
+    // stale 保护：比对当前磁盘与写入后的 after，防止覆盖用户后改的内容
+    let current = null;
+    let exists = true;
+    try {
+      current = await fs.readFile(filePath, "utf8");
+    } catch {
+      exists = false;
+      current = null;
+    }
+    if (row.after != null) {
+      if (exists && current !== String(row.after)) {
+        return {
+          ok: false,
+          code: "STALE_FILE",
+          path: filePath,
+          error: "文件已被再次修改，未自动撤销",
+        };
+      }
+      if (!exists && row.before != null) {
+        return {
+          ok: false,
+          code: "STALE_FILE",
+          path: filePath,
+          error: "文件已不存在，未自动撤销",
+        };
+      }
+    }
+
     if (row.before == null) {
       // was create — delete file
-      try {
-        await fs.unlink(filePath);
-      } catch {
-        /* ignore */
+      if (exists) {
+        try {
+          await fs.unlink(filePath);
+        } catch {
+          /* ignore */
+        }
       }
     } else {
       await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -769,7 +839,8 @@ function buildQuestSystem(
   expert,
   provider,
   model,
-  skillsText = ""
+  skillsText = "",
+  memoryText = ""
 ) {
   const p = provider || getActiveProvider(cfg);
   const m = model || getActiveModel(cfg);
@@ -789,6 +860,7 @@ function buildQuestSystem(
     expertHint,
     "规则：先探索再改动；edit_file / apply_diff 精确替换；不要编造文件内容。",
     "匹配已安装 Skill 时先 load_skill 再按技能说明执行（本机 zcode/agents 技能）。",
+    memoryText ? `相关长期记忆（按目标检索）：\n${memoryText}` : "",
     skillsText || "",
     `服务商: ${p?.name || "none"} (${p?.type || "?"}) · 模型: ${m || "none"}`,
     `Base URL: ${p?.baseUrl || "n/a"}`,

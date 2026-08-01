@@ -43,6 +43,14 @@
     $(id)?.classList.remove("show");
   }
 
+  /** 标准空状态元素：<div class="tree-empty">…</div> */
+  function emptyState(text) {
+    const el = document.createElement("div");
+    el.className = "tree-empty";
+    el.textContent = text;
+    return el;
+  }
+
   function formatTok(n) {
     const v = Number(n) || 0;
     if (v >= 1e6) return (v / 1e6).toFixed(1) + "M";
@@ -142,6 +150,7 @@
       const msgEl = $("modalConfirmMsg");
       const okBtn = $("modalConfirmOk");
       const cancelBtn = $("modalConfirmCancel");
+      const closeBtn = modal?.querySelector('[data-close="modalConfirm"]');
       if (!modal || !msgEl || !okBtn || !cancelBtn) {
         // Fallback to native if modal not yet in DOM
         resolve(window.confirm(message));
@@ -153,12 +162,15 @@
         closeModal("modalConfirm");
         okBtn.removeEventListener("click", onOk);
         cancelBtn.removeEventListener("click", onCancel);
+        closeBtn?.removeEventListener("click", onClose);
         resolve(result);
       }
       function onOk() { cleanup(true); }
       function onCancel() { cleanup(false); }
+      function onClose() { cleanup(false); }
       okBtn.addEventListener("click", onOk);
       cancelBtn.addEventListener("click", onCancel);
+      closeBtn?.addEventListener("click", onClose);
     });
   }
 
@@ -169,6 +181,7 @@
     toast,
     openModal,
     closeModal,
+    emptyState,
     formatTok,
     showCtxMenu,
     hideCtxMenu,

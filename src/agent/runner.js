@@ -109,18 +109,21 @@ function _buildMessages(session, sessions, editorCtx, system, visionParts, memor
 }
 
 // ── Helper: one streaming round → { assistantText, calls, sawUsage, earlyReturn } ──
-async function _streamRound(cfg, messages, useTools, signal, events, sessions) {
+async function _streamRound(cfg, messages, useTools, signal, events, sessions, mcpManager = null) {
   let assistantText = "";
   const toolCalls = new Map();
   let sawUsage = false;
   const modelName = getActiveModel(cfg);
+  const agentTools = useTools
+    ? AGENT_TOOLS.concat(mcpManager?.getTools ? mcpManager.getTools() : [])
+    : undefined;
 
   try {
-    const snap = contextStats.beginRequest({ model: modelName, cfg, messages, tools: useTools ? AGENT_TOOLS : undefined });
+    const snap = contextStats.beginRequest({ model: modelName, cfg, messages, tools: agentTools });
     events.onContextStats?.(snap);
   } catch { /* ignore */ }
 
-  for await (const chunk of streamChat(cfg, { messages, tools: useTools ? AGENT_TOOLS : undefined, signal })) {
+  for await (const chunk of streamChat(cfg, { messages, tools: agentTools, signal })) {
     if (chunk.type === "text" && chunk.text) {
       assistantText += chunk.text;
       events.onText?.(chunk.text);
@@ -162,6 +165,14 @@ async function _streamRound(cfg, messages, useTools, signal, events, sessions) {
   return { assistantText, calls, sawUsage, earlyReturn: false };
 }
 
+// ── Helper: execute a tool; MCP tools route to the MCP manager ────────────────
+async function executeToolOrMcp(toolCtx, name, argsRaw) {
+  if (String(name || "").startsWith("mcp__") && toolCtx.mcpManager) {
+    return toolCtx.mcpManager.callTool(name, argsRaw);
+  }
+  return executeTool(toolCtx, name, argsRaw);
+}
+
 // ── Helper: execute all tool calls for one round ──────────────────────────────
 async function _dispatchToolCalls(calls, toolCtx, runner, sessions, events, signal, messages) {
   for (const call of calls) {
@@ -169,18 +180,23 @@ async function _dispatchToolCalls(calls, toolCtx, runner, sessions, events, sign
     events.onToolStart?.(call.function.name, call.function.arguments);
     try { events.ptyBridge?.mirrorTool?.(call.function.name, "start", String(call.function.arguments || "").slice(0, 120)); } catch { /* ignore */ }
 
+    let snapshotRow = null;
     if (MUTATING_TOOLS.has(call.function.name)) {
-      try { await runner._snapshotBeforeWrite(toolCtx.workspaceRoot, call.function.arguments); } catch { /* ignore */ }
+      try { snapshotRow = await runner._snapshotBeforeWrite(toolCtx.workspaceRoot, call.function.arguments, toolCtx.sessionId); } catch { /* ignore */ }
     }
 
-    const result = await executeTool(toolCtx, call.function.name, call.function.arguments);
+    const result = await executeToolOrMcp(toolCtx, call.function.name, call.function.arguments);
     const content = String(result.content || "").slice(0, TOOL_RESULT_CAP);
 
     if (MUTATING_TOOLS.has(call.function.name)) {
-      try {
-        await runner._captureAfterWrite(toolCtx.workspaceRoot, call.function.name, call.function.arguments);
-        events.onFileChanges?.(sessions.publicFileChanges());
-      } catch { /* ignore */ }
+      if (result?.ok === true) {
+        try {
+          await runner._captureAfterWrite(toolCtx.workspaceRoot, call.function.name, call.function.arguments, toolCtx.sessionId);
+          events.onFileChanges?.(sessions.publicFileChanges(toolCtx.sessionId), toolCtx.sessionId);
+        } catch { /* ignore */ }
+      } else if (snapshotRow?.path) {
+        try { runner._discardUnchangedFailedSnapshot(snapshotRow.path, toolCtx.sessionId); } catch { /* ignore */ }
+      }
     }
 
     try { events.ptyBridge?.mirrorTool?.(call.function.name, "end", content.slice(0, 160)); } catch { /* ignore */ }
@@ -212,6 +228,7 @@ function buildSystemPrompt(cfg, workspaceRoot, rulesText = "", skillsText = "") 
 - 用户要 Word/PDF/PPT 时用 create_document（format: docx|pdf|pptx），路径建议放在 exports/
 - 任务匹配已安装 Skill 描述时先 load_skill，再按技能说明用终端/文件工具执行（技能来自本机 zcode/agents）
 - 用户消息中 @相对路径（如 @src/main.js）表示引用了该文件，你会在上下文中看到对应内容
+- 带 mcp__ 前缀的工具来自外部 MCP server（如文件系统/浏览器/GitHub），按需直接调用
 - 一次把用户任务做完：不要中途停下来等用户说「继续」；只要还有未完成步骤，就继续调用工具`
     : "你处于 ASK 模式，回答问题并给出代码建议，不要声称已修改文件。需要生成文档或执行技能时提示用户切换到 Agent 模式。";
 
@@ -234,9 +251,10 @@ function buildSystemPrompt(cfg, workspaceRoot, rulesText = "", skillsText = "") 
 }
 
 class AgentRunner {
-  constructor(sessions, memoryStore = null) {
+  constructor(sessions, memoryStore = null, mcpManager = null) {
     this.sessions = sessions;
     this.memoryStore = memoryStore;
+    this.mcpManager = mcpManager;
     this.abort = null;
   }
 
@@ -262,9 +280,11 @@ class AgentRunner {
       .map((a) => ({ type: "image_url", image_url: { url: a.dataUrl } }));
 
     // Begin file-change tracking for this turn (enables undo / summary)
+    let turnSessionId = null;
     try {
-      this.sessions.beginFileChangeTurn();
-      events.onFileChanges?.(this.sessions.publicFileChanges());
+      const turnSession = this.sessions.beginFileChangeTurn();
+      turnSessionId = turnSession?.id || null;
+      events.onFileChanges?.(this.sessions.publicFileChanges(turnSessionId), turnSessionId);
     } catch { /* ignore */ }
 
     // branchFromUserEdit already appended; skip double-append
@@ -306,6 +326,7 @@ class AgentRunner {
     const maxAutoContinue = resolveAgentAutoContinue(cfg);
     const toolCtx = {
       cfg, workspaceRoot,
+      sessionId: turnSessionId,
       openTabs: editorCtx.openTabs || [],
       activeFile: editorCtx.activeFile || "",
       activeSelection: editorCtx.selection || "",
@@ -313,6 +334,7 @@ class AgentRunner {
       onFsChange: events.onFsChange,
       ptyBridge: events.ptyBridge || null,
       skillCatalog,
+      mcpManager: this.mcpManager || null,
     };
 
     try {
@@ -332,7 +354,7 @@ class AgentRunner {
             : `agent 第 ${round + 1}/${maxRounds} 轮`;
           events.onStatus?.(useTools ? phase : "思考中");
 
-          const roundResult = await _streamRound(cfg, messages, useTools, signal, events, this.sessions);
+          const roundResult = await _streamRound(cfg, messages, useTools, signal, events, this.sessions, this.mcpManager);
           if (roundResult.earlyReturn) { this.abort = null; return; }
 
           const { assistantText, calls } = roundResult;
@@ -383,7 +405,7 @@ class AgentRunner {
       }
     } finally {
       this.abort = null;
-      try { events.onFileChanges?.(this.sessions.publicFileChanges()); } catch { /* ignore */ }
+      try { events.onFileChanges?.(this.sessions.publicFileChanges(turnSessionId), turnSessionId); } catch { /* ignore */ }
       events.onDone?.();
     }
   }
@@ -391,7 +413,7 @@ class AgentRunner {
   /**
    * 写前快照：同一文件只保留本轮第一次 before（与 Quest 一致）
    */
-  async _snapshotBeforeWrite(workspaceRoot, argsJson) {
+  async _snapshotBeforeWrite(workspaceRoot, argsJson, sessionId = null) {
     const target = parseMutatingPath(argsJson);
     if (!target) return null;
     const resolved = resolveSafePath(workspaceRoot, target);
@@ -407,10 +429,10 @@ class AgentRunner {
       relative: resolved.relative || target,
       kind: before == null ? "create" : "edit",
       before,
-    });
+    }, sessionId);
   }
 
-  async _captureAfterWrite(workspaceRoot, toolName, argsJson) {
+  async _captureAfterWrite(workspaceRoot, toolName, argsJson, sessionId = null) {
     const target = parseMutatingPath(argsJson);
     if (!target) return null;
     const resolved = resolveSafePath(workspaceRoot, target);
@@ -422,7 +444,7 @@ class AgentRunner {
       after = null;
     }
     const existing = this.sessions
-      .getFileChanges()
+      .getFileChanges(sessionId)
       .find((f) => f.path === resolved.absolute);
     return this.sessions.recordFileChange({
       path: resolved.absolute,
@@ -433,34 +455,72 @@ class AgentRunner {
           : existing?.kind || (existing?.before == null ? "create" : "write"),
       before: existing?.before ?? null,
       after,
-    });
+    }, sessionId);
+  }
+
+  _discardUnchangedFailedSnapshot(filePath, sessionId = null) {
+    const abs = path.normalize(String(filePath || ""));
+    if (!abs) return false;
+    const row = this.sessions.getFileChanges(sessionId).find((f) => f.path === abs);
+    if (!row || row.after != null) return false;
+    return this.sessions.removeFileChange(abs, sessionId);
   }
 
   /** 回滚单个文件到本轮写前内容 */
-  async applyReject(filePath) {
+  async applyReject(filePath, sessionId = null) {
     const abs = path.normalize(String(filePath || ""));
     if (!abs) throw new Error("缺少路径");
-    const row = this.sessions.getFileChanges().find((f) => f.path === abs);
+    const row = this.sessions.getFileChanges(sessionId).find((f) => f.path === abs);
     if (!row) throw new Error("未找到变更");
     if (row.rejected) return { ok: true, already: true };
+
+    let current = null;
+    let exists = true;
+    try {
+      current = await fs.readFile(abs, "utf8");
+    } catch {
+      exists = false;
+      current = null;
+    }
+    if (row.after != null) {
+      if (exists && current !== String(row.after)) {
+        return {
+          ok: false,
+          code: "STALE_FILE",
+          path: abs,
+          error: "文件已被再次修改，未自动撤销",
+        };
+      }
+      if (!exists && row.before != null) {
+        return {
+          ok: false,
+          code: "STALE_FILE",
+          path: abs,
+          error: "文件已不存在，未自动撤销",
+        };
+      }
+    }
+
     if (row.before == null) {
-      try {
-        await fs.unlink(abs);
-      } catch {
-        /* 文件可能已不存在 */
+      if (exists) {
+        try {
+          await fs.unlink(abs);
+        } catch {
+          /* 文件可能已不存在 */
+        }
       }
     } else {
       await fs.mkdir(path.dirname(abs), { recursive: true });
       await fs.writeFile(abs, row.before, "utf8");
     }
-    this.sessions.rejectChange(abs);
+    this.sessions.rejectChange(abs, sessionId);
     return { ok: true, path: abs };
   }
 
   /** 回滚本轮全部未 rejected 的变更（后写先回） */
-  async applyRejectAll() {
+  async applyRejectAll(sessionId = null) {
     const rows = this.sessions
-      .getFileChanges()
+      .getFileChanges(sessionId)
       .filter((f) => !f.rejected)
       .slice()
       .reverse();
@@ -468,12 +528,12 @@ class AgentRunner {
     for (const row of rows) {
       try {
         // eslint-disable-next-line no-await-in-loop
-        results.push(await this.applyReject(row.path));
+        results.push(await this.applyReject(row.path, sessionId));
       } catch (e) {
         results.push({ ok: false, path: row.path, error: e.message || String(e) });
       }
     }
-    return { ok: true, results, remaining: this.sessions.publicFileChanges() };
+    return { ok: true, results, remaining: this.sessions.publicFileChanges(sessionId) };
   }
 }
 

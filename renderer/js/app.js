@@ -42,8 +42,10 @@
     _runDetail: "",
     editMessageId: null,
     branchMeta: [],
+    activeSessionId: null,
     /** 本轮 Agent 写盘摘要（无 before/after） */
     fileChanges: [],
+    fileChangesSessionId: null,
   };
 
   function collapseProcessEnabled() {
@@ -460,16 +462,64 @@
   function setBusyButton(btn, busy, labelBusy, labelIdle) {
     if (!btn) return;
     if (busy) {
-      btn.dataset.prevText = btn.textContent;
+      if (!btn.dataset.prevText) btn.dataset.prevText = btn.textContent;
       if (labelBusy) btn.textContent = labelBusy;
       btn.classList.add("busy");
       btn.disabled = true;
+      btn.setAttribute("aria-busy", "true");
     } else {
       btn.classList.remove("busy");
       btn.disabled = false;
+      btn.removeAttribute("aria-busy");
       if (labelIdle) btn.textContent = labelIdle;
       else if (btn.dataset.prevText) btn.textContent = btn.dataset.prevText;
+      delete btn.dataset.prevText;
     }
+  }
+
+  /** 给 IPC/网络请求加前端超时，避免按钮一直转圈 */
+  function withUiTimeout(promise, ms, label = "请求") {
+    const timeoutMs = Math.max(3000, Number(ms) || 20000);
+    let settled = false;
+    let timer;
+    return new Promise((resolve, reject) => {
+      timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error(`${label}超时（${Math.round(timeoutMs / 1000)}s）`));
+      }, timeoutMs);
+      Promise.resolve(promise).then(
+        (v) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(v);
+        },
+        (e) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          reject(e);
+        }
+      );
+    });
+  }
+
+  /** 按钮兜底：无论 promise 怎样，最多 N ms 后强制复位 */
+  function guardBusyButton(btn, idleLabel, ms = 20000) {
+    if (!btn) return () => {};
+    const token = String(Date.now()) + Math.random().toString(36).slice(2, 6);
+    btn.dataset.busyToken = token;
+    const timer = setTimeout(() => {
+      if (btn.dataset.busyToken !== token) return;
+      btn.dataset.busy = "0";
+      setBusyButton(btn, false, null, idleLabel);
+      toast(idleLabel + "超时，已恢复按钮（请检查网络/Base URL）", true);
+    }, ms);
+    return () => {
+      clearTimeout(timer);
+      if (btn.dataset.busyToken === token) delete btn.dataset.busyToken;
+    };
   }
 
   function setTaskProgress(active, detail) {
@@ -998,7 +1048,7 @@
   });
   document.querySelectorAll(".modal-backdrop").forEach((bd) => {
     bd.addEventListener("click", (e) => {
-      if (e.target === bd) bd.classList.remove("show");
+      if (e.target === bd) closeModal(bd.id);
     });
   });
 
@@ -1218,8 +1268,10 @@
   async function indexWorkspaceLsp(silent) {
     if (!state.workspace) return;
     try {
-      if (!silent) toast("正在索引 TS/JS…");
+      if (!silent) toast("正在索引代码…");
       await EmsoderEditor.ensure();
+      // 切换/重开工作区时先释放旧索引模型（保留已打开 tab 的模型）
+      EmsoderLsp?.disposeIndexedModels?.(state.tabs.map((t) => t.path));
       const r = await EmsoderLsp?.indexWorkspace?.(state.workspace);
       if (!silent) {
         const tc = r?.tsconfig ? ` · ${r.tsconfig}` : "";
@@ -1339,6 +1391,7 @@
     if (view === "git") return renderGitSide();
     if (view === "skills") return renderSkillsSide();
     if (view === "memory") return renderMemorySide();
+    if (view === "mcp") return renderMcpSide();
     if (view === "quest") {
       EmsoderQuest?.refreshBoard?.();
       EmsoderQuest?.renderSide?.();
@@ -1350,6 +1403,90 @@
       return;
     }
     return renderSessionsSide();
+  }
+
+  /** 相对时间：刚刚 / N 分钟前 / N 小时前 / 昨天 / M月D日 / YYYY-M-D */
+  function formatRelativeTime(ts) {
+    const t = Number(ts);
+    if (!t) return "";
+    const diff = Date.now() - t;
+    if (diff < 60 * 1000) return "刚刚";
+    if (diff < 60 * 60 * 1000) return Math.floor(diff / 60000) + " 分钟前";
+    if (diff < 24 * 60 * 60 * 1000) return Math.floor(diff / 3600000) + " 小时前";
+    const d = new Date(t);
+    const now = new Date();
+    const sameYear = d.getFullYear() === now.getFullYear();
+    if (sameYear && d.getDate() === now.getDate() - 1 && d.getMonth() === now.getMonth()) return "昨天";
+    return `${sameYear ? "" : d.getFullYear() + "-"}${d.getMonth() + 1}月${d.getDate()}日`;
+  }
+
+  /** 仅当会话侧栏可见时静默重绘（不打断其他视图/聊天） */
+  async function refreshSessionsSideIfVisible() {
+    if (state.sideView !== "sessions") return;
+    try {
+      await renderSessionsSide();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** 双击标题内联重命名 */
+  function beginRenameSession(item, titleEl) {
+    const input = document.createElement("input");
+    input.className = "session-title-input";
+    input.value = item.title || "";
+    input.maxLength = 60;
+    titleEl.replaceWith(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = async (save) => {
+      if (done) return;
+      done = true;
+      const value = save ? input.value.trim() : "";
+      if (save && value && value !== (item.title || "")) {
+        try {
+          const r = await emsoder.renameSession(item.id, value);
+          if (r?.ok === false) {
+            toast(r.error || "重命名失败", true);
+          } else if (r?.session && r.session.id === state.activeSessionId) {
+            applySessionUpdate(r.session);
+          }
+          await refreshSessionsSideIfVisible();
+        } catch (e) {
+          toast(e.message || e, true);
+        }
+      } else {
+        await refreshSessionsSideIfVisible();
+      }
+    };
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") finish(true);
+      else if (e.key === "Escape") finish(false);
+    });
+    input.addEventListener("blur", () => finish(true));
+    input.addEventListener("click", (e) => e.stopPropagation());
+  }
+
+  /** 单条删除会话（hover ✕ 按钮） */
+  async function deleteSessionItem(id, label) {
+    if (!(await EmsoderDom.showConfirm("删除会话「" + label + "」？不可恢复。"))) return;
+    try {
+      const r = await emsoder.removeSession(id);
+      toast("已删除会话");
+      const active = r?.session || (await emsoder.getSession?.()) || null;
+      if (active) {
+        applySessionUpdate(active);
+      } else {
+        state.branchMeta = [];
+        renderHistory([], []);
+        renderChatChanges([], null);
+      }
+    } catch (e) {
+      toast(e.message || e, true);
+    }
+    await refreshSessionsSideIfVisible();
   }
 
   async function renderSessionsSide() {
@@ -1368,7 +1505,7 @@
       try {
         applySessionUpdate(await emsoder.newSession());
         toast("已创建新会话");
-        if (state.sideView === "sessions") await renderSessionsSide();
+        await refreshSessionsSideIfVisible();
       } catch (e) {
         toast(e?.message || e || "创建失败", true);
       }
@@ -1392,10 +1529,7 @@
     };
 
     if (!list.length) {
-      const empty = document.createElement("div");
-      empty.className = "tree-empty";
-      empty.textContent = "暂无会话";
-      sideBody.appendChild(empty);
+      sideBody.appendChild(EmsoderDom.emptyState("暂无会话"));
       syncDel();
       return;
     }
@@ -1416,24 +1550,52 @@
       });
       const meta = document.createElement("div");
       meta.className = "session-meta";
-      const title = document.createElement("div");
+      const titleRow = document.createElement("div");
+      titleRow.className = "session-title-row";
+      const title = document.createElement("span");
       title.className = "session-title";
       title.textContent = item.title || "未命名";
+      title.title = item.title || "";
+      titleRow.appendChild(title);
+      if (item.mode === "ask") {
+        const badge = document.createElement("span");
+        badge.className = "session-mode-badge";
+        badge.textContent = "Ask";
+        titleRow.appendChild(badge);
+      }
       const sub = document.createElement("div");
       sub.className = "session-sub";
       const n = item.messageCount != null ? item.messageCount : "";
-      sub.textContent = n !== "" ? n + " 条消息" : "";
-      meta.appendChild(title);
+      const t = formatRelativeTime(item.updatedAt);
+      sub.textContent = [n !== "" ? n + " 条消息" : "", t].filter(Boolean).join(" · ");
+      meta.appendChild(titleRow);
       meta.appendChild(sub);
+      const delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "icon-btn session-del";
+      delBtn.title = "删除会话";
+      delBtn.textContent = "✕";
+      delBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        await deleteSessionItem(item.id, item.title || "未命名");
+      });
       el.appendChild(cb);
       el.appendChild(meta);
+      el.appendChild(delBtn);
+      titleRow.addEventListener("dblclick", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        beginRenameSession(item, title);
+      });
       el.addEventListener("click", async (e) => {
-        if (e.target === cb) return;
+        if (e.target === cb || e.target.closest(".session-del")) return;
+        if (state.generating) {
+          toast("生成中，请先停止", true);
+          return;
+        }
         await emsoder.setActiveSession(item.id);
         const session = await emsoder.getSession();
-        state.branchMeta = session.branchMeta || [];
-        renderHistory(session.messages || [], session.branchMeta);
-        renderChatChanges(session.fileChanges || []);
+        applySessionUpdate(session);
         sideBody.querySelectorAll(".session-item").forEach((n) => {
           n.classList.toggle("active", n.dataset.id === item.id);
         });
@@ -1471,11 +1633,11 @@
           if (active) {
             state.branchMeta = active.branchMeta || [];
             renderHistory(active.messages || [], active.branchMeta);
-            renderChatChanges(active.fileChanges || []);
+            renderChatChanges(active.fileChanges || [], active.id || null);
           } else {
             state.branchMeta = [];
             renderHistory([], []);
-            renderChatChanges([]);
+            renderChatChanges([], null);
           }
         } catch {
           /* 聊天同步失败不阻塞列表刷新 */
@@ -1823,11 +1985,10 @@
       });
 
       if (!skills.length) {
-        const empty = document.createElement("div");
-        empty.className = "tree-empty";
+        const empty = EmsoderDom.emptyState(
+          "未发现技能\n目录：~/.zcode/skills、~/.agents/skills\n点上方「安装技能…」或外部 npx skills add"
+        );
         empty.style.whiteSpace = "pre-wrap";
-        empty.textContent =
-          "未发现技能\n目录：~/.zcode/skills、~/.agents/skills\n点上方「安装技能…」或外部 npx skills add";
         container.appendChild(empty);
         sideBody.appendChild(container);
         return;
@@ -1861,15 +2022,15 @@
 
         listHost.innerHTML = "";
         if (!filtered.length) {
-          const empty = document.createElement("div");
-          empty.className = "tree-empty";
-          empty.textContent = q.trim()
-            ? `无匹配「${q.trim()}」的技能`
-            : source !== "all"
-              ? `当前来源无技能`
-              : status === "disabled"
-                ? "没有已禁用的技能"
-                : "无匹配技能";
+          const empty = EmsoderDom.emptyState(
+            q.trim()
+              ? `无匹配「${q.trim()}」的技能`
+              : source !== "all"
+                ? `当前来源无技能`
+                : status === "disabled"
+                  ? "没有已禁用的技能"
+                  : "无匹配技能"
+          );
           listHost.appendChild(empty);
         } else {
           const groups = new Map();
@@ -2328,22 +2489,66 @@
 
   function renderSearchSide() {
     sideTitle.textContent = "搜索";
-    sideBody.innerHTML = `
-      <div style="padding:12px;">
-        <div class="field"><label>关键词</label><input id="searchQuery" placeholder="在工作区搜索…" /></div>
-        <div class="field"><label>扩展过滤</label><input id="searchGlob" placeholder=".js / .ts" /></div>
-        <button class="btn primary" id="btnDoSearch" style="width:100%">搜索</button>
-        <div id="searchMeta" style="margin-top:8px;font-size:11px;color:var(--text-muted)"></div>
-        <div id="searchResults" style="margin-top:8px;user-select:text;"></div>
-        <button class="btn" id="btnSearchMore" style="width:100%;margin-top:8px;display:none">加载更多</button>
-      </div>`;
+    sideBody.innerHTML = "";
+
+    const form = document.createElement("div");
+    form.style.padding = "12px";
+
+    const qField = document.createElement("div");
+    qField.className = "field";
+    const qLabel = document.createElement("label");
+    qLabel.textContent = "关键词";
+    const qInput = document.createElement("input");
+    qInput.id = "searchQuery";
+    qInput.placeholder = "在工作区搜索…";
+    qField.appendChild(qLabel);
+    qField.appendChild(qInput);
+    form.appendChild(qField);
+
+    const globField = document.createElement("div");
+    globField.className = "field";
+    const globLabel = document.createElement("label");
+    globLabel.textContent = "扩展过滤";
+    const globInput = document.createElement("input");
+    globInput.id = "searchGlob";
+    globInput.placeholder = ".js / .ts";
+    globField.appendChild(globLabel);
+    globField.appendChild(globInput);
+    form.appendChild(globField);
+
+    const btnSearch = document.createElement("button");
+    btnSearch.className = "btn primary";
+    btnSearch.id = "btnDoSearch";
+    btnSearch.style.width = "100%";
+    btnSearch.textContent = "搜索";
+    form.appendChild(btnSearch);
+
+    const meta = document.createElement("div");
+    meta.id = "searchMeta";
+    meta.style.cssText = "margin-top:8px;font-size:11px;color:var(--text-muted)";
+    form.appendChild(meta);
+
+    const results = document.createElement("div");
+    results.id = "searchResults";
+    results.style.cssText = "margin-top:8px;user-select:text";
+    form.appendChild(results);
+
+    const btnMore = document.createElement("button");
+    btnMore.className = "btn";
+    btnMore.id = "btnSearchMore";
+    btnMore.style.cssText = "width:100%;margin-top:8px;display:none";
+    btnMore.textContent = "加载更多";
+    form.appendChild(btnMore);
+
+    sideBody.appendChild(form);
+
     const PAGE = 40;
     let allResults = [];
     let shown = 0;
     const paintPage = () => {
       const box = $("searchResults");
       const more = $("btnSearchMore");
-      const meta = $("searchMeta");
+      const metaEl = $("searchMeta");
       if (!box) return;
       const slice = allResults.slice(shown, shown + PAGE);
       for (const r of slice) {
@@ -2354,8 +2559,8 @@
         box.appendChild(btn);
       }
       shown += slice.length;
-      if (meta) {
-        meta.textContent = allResults.length
+      if (metaEl) {
+        metaEl.textContent = allResults.length
           ? `显示 ${shown} / ${allResults.length}`
           : "";
       }
@@ -2363,12 +2568,13 @@
     };
     const run = async () => {
       const q = $("searchQuery").value.trim();
+      const box = $("searchResults");
       if (!q) return;
       if (!state.workspace) {
-        $("searchResults").textContent = "请先打开工作区";
+        box.replaceChildren(EmsoderDom.emptyState("请先打开工作区"));
         return;
       }
-      $("searchResults").textContent = "搜索中…";
+      box.replaceChildren(EmsoderDom.emptyState("搜索中…"));
       if ($("searchMeta")) $("searchMeta").textContent = "";
       if ($("btnSearchMore")) $("btnSearchMore").style.display = "none";
       try {
@@ -2377,22 +2583,21 @@
           glob: $("searchGlob").value.trim(),
           maxResults: 200,
         });
-        const box = $("searchResults");
-        box.innerHTML = "";
+        box.replaceChildren();
         allResults = [];
         shown = 0;
         if (!out.ok) {
-          box.textContent = out.error || "搜索失败";
+          box.appendChild(EmsoderDom.emptyState(out.error || "搜索失败"));
           return;
         }
         if (!out.results.length) {
-          box.textContent = `没有匹配 “${q}”`;
+          box.appendChild(EmsoderDom.emptyState(`没有匹配 “${q}”`));
           return;
         }
         allResults = out.results;
         paintPage();
       } catch (err) {
-        $("searchResults").textContent = err.message || String(err);
+        box.replaceChildren(EmsoderDom.emptyState(err.message || String(err)));
       }
     };
     $("btnDoSearch").onclick = run;
@@ -2404,8 +2609,10 @@
 
   function renderGitSide() {
     sideTitle.textContent = "Git";
-    sideBody.innerHTML =
-      '<div class="tree-empty">完整 Git 面板在底部「Git」标签。<br/>点击下方按钮打开。</div>';
+    sideBody.innerHTML = "";
+    sideBody.appendChild(
+      EmsoderDom.emptyState("完整 Git 面板在底部「Git」标签。点击下方按钮打开。")
+    );
     const btn = document.createElement("button");
     btn.className = "btn primary";
     btn.style.margin = "0 16px";
@@ -2416,6 +2623,357 @@
       EmsoderPanels.showTab("git");
     };
     sideBody.appendChild(btn);
+  }
+
+  // ---------- MCP sidebar ----------
+  const mcpStatusLabel = {
+    running: "已连接",
+    connecting: "连接中…",
+    stopped: "未连接",
+    error: "失败",
+  };
+
+  /** zcode 风格预设（字段与 mcp:upsert 归一化一致） */
+  const MCP_PRESETS = {
+    context7: {
+      name: "Context7",
+      type: "stdio",
+      command: "npx",
+      args: ["-y", "@upstash/context7-mcp"],
+      hint: "文档/依赖问答，自动检索最新库文档",
+    },
+    filesystem: {
+      name: "Filesystem",
+      type: "stdio",
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-filesystem"],
+      hint: "本机文件读写（参数填一个可访问目录）",
+    },
+    playwright: {
+      name: "Playwright",
+      type: "stdio",
+      command: "npx",
+      args: ["-y", "@playwright/mcp@latest"],
+      hint: "浏览器自动化：打开页面、点击、截图",
+    },
+    fetch: {
+      name: "Fetch",
+      type: "stdio",
+      command: "npx",
+      args: ["-y", "mcp-server-fetch"],
+      hint: "抓取网页并转 Markdown",
+    },
+    memory: {
+      name: "Memory",
+      type: "stdio",
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-memory"],
+      hint: "知识图谱长期记忆",
+    },
+    github: {
+      name: "GitHub",
+      type: "http",
+      url: "https://api.githubcopilot.com/mcp/",
+      headers: { Authorization: "Bearer " },
+      hint: "GitHub 仓库/Issue/PR（需 Personal Access Token）",
+    },
+  };
+
+  function syncMcpFormType(type) {
+    const isHttp = type === "http";
+    document.querySelectorAll(".mcp-field-stdio").forEach((el) => {
+      el.style.display = isHttp ? "none" : "";
+    });
+    document.querySelectorAll(".mcp-field-http").forEach((el) => {
+      el.style.display = isHttp ? "" : "none";
+    });
+  }
+
+  function openMcpEdit(server) {
+    $("mcpEditTitle").textContent = server ? "编辑 MCP Server" : "添加 MCP Server";
+    $("mpPreset").value = "";
+    $("mpId").value = server?.id || "";
+    $("mpId").disabled = !!server;
+    $("mpName").value = server?.name || "";
+    $("mpType").value = server?.type === "http" ? "http" : "stdio";
+    $("mpCommand").value = server?.command || "";
+    $("mpArgs").value = (server?.args || []).join(",");
+    $("mpCwd").value = server?.cwd || "";
+    $("mpUrl").value = server?.url || "";
+    $("mpHeaders").value = Object.entries(server?.headers || {})
+      .map(([k, v]) => k + ": " + v)
+      .join("\n");
+    $("mpEnv").value = Object.entries(server?.env || {})
+      .map(([k, v]) => k + "=" + v)
+      .join("\n");
+    $("mpTimeout").value = server?.timeoutMs ? Math.round(server.timeoutMs / 1000) : 30;
+    $("mpEnabled").value = server?.enabled === false ? "false" : "true";
+    syncMcpFormType($("mpType").value);
+    openModal("modalMcpEdit");
+  }
+
+  $("mpPreset")?.addEventListener("change", () => {
+    const p = MCP_PRESETS[$("mpPreset").value];
+    if (!p) return;
+    if (!$("mpId").disabled) $("mpId").value = p.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    $("mpName").value = p.name;
+    $("mpType").value = p.type === "http" ? "http" : "stdio";
+    $("mpCommand").value = p.command || "";
+    $("mpArgs").value = (p.args || []).join(",");
+    $("mpCwd").value = "";
+    $("mpUrl").value = p.url || "";
+    $("mpHeaders").value = Object.entries(p.headers || {})
+      .map(([k, v]) => k + ": " + v)
+      .join("\n");
+    $("mpTimeout").value = 30;
+    syncMcpFormType($("mpType").value);
+  });
+
+  $("mpType")?.addEventListener("change", () => syncMcpFormType($("mpType").value));
+
+  function parseHeaderLines(text) {
+    const out = {};
+    for (const line of String(text || "").split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t) continue;
+      const ci = t.indexOf(":");
+      if (ci > 0) out[t.slice(0, ci).trim()] = t.slice(ci + 1).trim();
+    }
+    return out;
+  }
+
+  function parseEnvLines(text) {
+    const out = {};
+    for (const line of String(text || "").split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t) continue;
+      const eq = t.indexOf("=");
+      if (eq > 0) out[t.slice(0, eq).trim()] = t.slice(eq + 1).trim();
+    }
+    return out;
+  }
+
+  $("btnSaveMcp")?.addEventListener("click", async () => {
+    const id = $("mpId").value.trim();
+    const type = $("mpType").value === "http" ? "http" : "stdio";
+    const command = $("mpCommand").value.trim();
+    const url = $("mpUrl").value.trim();
+    if (!id || (type === "stdio" ? !command : !url)) {
+      toast(type === "stdio" ? "请填写 ID 和命令" : "请填写 ID 和 URL", true);
+      return;
+    }
+    const server = {
+      id,
+      name: $("mpName").value.trim() || id,
+      type,
+      command,
+      args: $("mpArgs")
+        .value.split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+      cwd: $("mpCwd").value.trim(),
+      url,
+      headers: parseHeaderLines($("mpHeaders").value),
+      env: parseEnvLines($("mpEnv").value),
+      timeoutMs: (Number($("mpTimeout").value) || 30) * 1000,
+      enabled: $("mpEnabled").value === "true",
+    };
+    try {
+      const r = await emsoder.upsertMcpServer(server);
+      if (r?.ok === false) {
+        toast(r.error || "保存失败", true);
+        return;
+      }
+      closeModal("modalMcpEdit");
+      toast("已保存 MCP Server");
+      await renderMcpSide();
+    } catch (e) {
+      toast(e.message || e, true);
+    }
+  });
+
+  async function renderMcpSide() {
+    sideTitle.textContent = "MCP";
+    sideBody.innerHTML = '<div class="tree-empty">加载中…</div>';
+    let data;
+    try {
+      data = await emsoder.listMcpServers();
+    } catch (e) {
+      sideBody.replaceChildren(EmsoderDom.emptyState(e.message || "MCP 未就绪"));
+      return;
+    }
+    const servers = data?.servers || [];
+    sideBody.innerHTML = "";
+
+    const toolbar = document.createElement("div");
+    toolbar.className = "session-toolbar";
+    const addBtn = document.createElement("button");
+    addBtn.className = "btn primary btn-new-session";
+    addBtn.type = "button";
+    addBtn.textContent = "＋ 添加 MCP Server";
+    addBtn.onclick = () => openMcpEdit(null);
+    toolbar.appendChild(addBtn);
+    sideBody.appendChild(toolbar);
+
+    if (!servers.length) {
+      sideBody.appendChild(
+        EmsoderDom.emptyState(
+          "没有配置 MCP Server。\n点上方「添加 MCP Server」用预设一键填充，例如：\nContext7（文档问答）、Filesystem（本机文件）、\nPlaywright（浏览器）、GitHub（HTTP）。"
+        )
+      );
+      return;
+    }
+
+    const list = document.createElement("div");
+    list.className = "mcp-server-list";
+    for (const s of servers) {
+      const card = document.createElement("div");
+      card.className = "mcp-server-card" + (s.enabled ? "" : " disabled");
+      card.dataset.id = s.id;
+
+      const head = document.createElement("div");
+      head.className = "mcp-server-head";
+      const dot = document.createElement("span");
+      dot.className = "mcp-status-dot " + s.status;
+      dot.title = mcpStatusLabel[s.status] || s.status;
+      const name = document.createElement("span");
+      name.className = "mcp-server-name";
+      name.textContent = s.name || s.id;
+      name.title = s.id;
+      const typeBadge = document.createElement("span");
+      typeBadge.className = "mcp-type-badge";
+      typeBadge.textContent = s.type === "http" ? "HTTP" : "stdio";
+      const badge = document.createElement("span");
+      badge.className = "mcp-tool-count";
+      badge.textContent = s.toolCount + " 工具";
+      head.appendChild(dot);
+      head.appendChild(name);
+      head.appendChild(typeBadge);
+      head.appendChild(badge);
+      if (s.enabled === false) {
+        const off = document.createElement("span");
+        off.className = "session-mode-badge";
+        off.textContent = "已禁用";
+        head.appendChild(off);
+      }
+      card.appendChild(head);
+
+      const cmd = document.createElement("div");
+      cmd.className = "mcp-server-cmd";
+      cmd.textContent =
+        s.type === "http"
+          ? s.url || ""
+          : [s.command, ...(s.args || [])].join(" ");
+      cmd.title = cmd.textContent;
+      card.appendChild(cmd);
+
+      if (s.status === "error" && s.error) {
+        const err = document.createElement("div");
+        err.className = "mcp-server-error";
+        err.textContent = "失败: " + s.error;
+        card.appendChild(err);
+      }
+
+      const actions = document.createElement("div");
+      actions.className = "list-actions mcp-server-actions";
+      const mkBtn = (label, cls, fn) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "btn" + (cls ? " " + cls : "");
+        b.textContent = label;
+        b.onclick = async (e) => {
+          e.stopPropagation();
+          await fn();
+        };
+        actions.appendChild(b);
+        return b;
+      };
+      if (s.status === "running") {
+        mkBtn("断开", "", async () => {
+          try {
+            await emsoder.disconnectMcp(s.id);
+            toast("已断开 " + s.name);
+          } catch (e2) {
+            toast(e2.message || e2, true);
+          }
+          await renderMcpSide();
+        });
+      } else {
+        mkBtn(s.status === "connecting" ? "连接中…" : "连接", "primary", async () => {
+          const r = await emsoder.connectMcp(s.id);
+          if (r?.ok === false) {
+            toast(r.error || "连接失败", true);
+          } else {
+            toast("已连接 " + s.name);
+          }
+          await renderMcpSide();
+        });
+      }
+      mkBtn("编辑", "", () => openMcpEdit(s));
+      mkBtn("删", "danger", async () => {
+        if (!(await EmsoderDom.showConfirm("删除 MCP Server「" + (s.name || s.id) + "」？"))) return;
+        try {
+          await emsoder.removeMcpServer(s.id);
+          toast("已删除");
+        } catch (e2) {
+          toast(e2.message || e2, true);
+        }
+        await renderMcpSide();
+      });
+      card.appendChild(actions);
+
+      // 工具列表（点击卡片展开）
+      const tools = document.createElement("div");
+      tools.className = "mcp-tool-list";
+      tools.hidden = true;
+      if (s.tools?.length) {
+        for (const t of s.tools) {
+          const row = document.createElement("div");
+          row.className = "mcp-tool-row";
+          const tn = document.createElement("span");
+          tn.className = "mcp-tool-name";
+          tn.textContent = t.fullName || t.name || "";
+          tn.title = t.description || "";
+          row.appendChild(tn);
+          if (t.description) {
+            const td = document.createElement("span");
+            td.className = "mcp-tool-desc";
+            td.textContent = t.description;
+            row.appendChild(td);
+          }
+          tools.appendChild(row);
+        }
+      } else {
+        tools.appendChild(
+          EmsoderDom.emptyState(
+            s.status === "running" ? "暂无工具（server 未返回）" : "连接后自动加载工具"
+          )
+        );
+      }
+      const toggleTools = (e) => {
+        if (e.target.closest(".mcp-server-actions")) return;
+        tools.hidden = !tools.hidden;
+      };
+      card.addEventListener("click", toggleTools);
+      card.appendChild(tools);
+
+      list.appendChild(card);
+    }
+    sideBody.appendChild(list);
+    const hint = document.createElement("div");
+    hint.className = "mcp-side-hint";
+    hint.textContent =
+      "MCP 工具（mcp__ 前缀）会自动加入 Agent 工具列表；支持 stdio 与 streamable HTTP。";
+    sideBody.appendChild(hint);
+  }
+
+  async function refreshMcpSideIfVisible() {
+    if (state.sideView !== "mcp") return;
+    try {
+      await renderMcpSide();
+    } catch {
+      /* ignore */
+    }
   }
 
   // ---------- Chat ----------
@@ -2590,7 +3148,7 @@
       const session = await emsoder.switchBranch(messageId, direction);
       state.branchMeta = session.branchMeta || [];
       renderHistory(session.messages || [], session.branchMeta);
-      renderChatChanges(session.fileChanges || []);
+      renderChatChanges(session.fileChanges || [], session.id || null);
       toast("已切换分支");
     } catch (e) {
       toast(e.message || e, true);
@@ -2710,8 +3268,9 @@
   }
 
   /** 本轮 Agent 写盘摘要 UI（对齐 Quest Changes） */
-  function renderChatChanges(fileChanges) {
+  function renderChatChanges(fileChanges, sessionId = null) {
     if (Array.isArray(fileChanges)) state.fileChanges = fileChanges;
+    if (sessionId !== null) state.fileChangesSessionId = sessionId || null;
     const box = $("chatChanges");
     const listEl = $("chatChangesList");
     const countEl = $("chatChangesCount");
@@ -2753,8 +3312,13 @@
         if (f.rejected) return;
         if (!(await EmsoderDom.showConfirm("回滚该文件到本轮写前内容？"))) return;
         try {
-          const r = await emsoder.rejectAgentChange(f.path);
-          renderChatChanges(r.fileChanges || []);
+          const sessionId = state.fileChangesSessionId || null;
+          const r = await emsoder.rejectAgentChange(f.path, sessionId);
+          renderChatChanges(r.fileChanges || [], sessionId);
+          if (r?.ok === false) {
+            toast(r?.code === "STALE_FILE" ? "文件已被你或其他工具改过，未撤销" : (r?.error || "撤销失败"), true);
+            return;
+          }
           if (f.path && state.tabs.some((t) => t.path === f.path)) {
             try {
               const file = await emsoder.readFile(f.path);
@@ -2784,7 +3348,7 @@
   async function showFileChangeDiff(f) {
     if (!f?.path) return;
     try {
-      const r = await emsoder.getAgentFileChangeDiff(f.path);
+      const r = await emsoder.getAgentFileChangeDiff(f.path, state.fileChangesSessionId || null);
       if (!r?.ok) {
         toast(r?.error || "无法加载对比", true);
         return;
@@ -2990,42 +3554,85 @@
           <div class="name">${escapeHtml(p.name)} ${p.enabled ? "" : "(禁用)"}</div>
           <div class="desc">${escapeHtml(p.type)} · ${escapeHtml(p.baseUrl)}</div>
         </div>
-        <button class="btn" data-act="edit">编辑</button>
-        <button class="btn" data-act="test">测试</button>
-        <button class="btn" data-act="refresh">刷新模型</button>
-        <button class="btn danger" data-act="del">删</button>`;
-      el.querySelector('[data-act="edit"]').onclick = () => openEditProvider(p);
+        <div class="list-actions">
+          <button class="btn" data-act="edit">编辑</button>
+          <button class="btn" data-act="test">测试</button>
+          <button class="btn" data-act="refresh">刷新模型</button>
+          <button class="btn danger" data-act="del">删</button>
+        </div>`;
+      el.querySelector('[data-act="edit"]').onclick = (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        openEditProvider(p);
+      };
       el.querySelector('[data-act="test"]').onclick = async (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
         const btn = ev.currentTarget;
+        if (!btn || btn.disabled || btn.dataset.busy === "1") return;
+        btn.dataset.busy = "1";
         setBusyButton(btn, true, "测试中…");
+        const release = guardBusyButton(btn, "测试", 20000);
         toast("正在测试 " + p.name + " …");
         try {
-          const r = await emsoder.testProvider(p.id);
-          toast((r.ok ? "✓ " : "✗ ") + (r.message || ""), !r.ok);
+          const r = await withUiTimeout(emsoder.testProvider(p.id), 18000, "测试");
+          toast((r?.ok ? "✓ " : "✗ ") + (r?.message || "无结果"), !r?.ok);
         } catch (e) {
-          toast("测试失败: " + (e.message || e), true);
+          toast("测试失败: " + (e?.message || e), true);
         } finally {
+          release();
+          btn.dataset.busy = "0";
           setBusyButton(btn, false, null, "测试");
         }
       };
       el.querySelector('[data-act="refresh"]').onclick = async (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
         const btn = ev.currentTarget;
+        if (!btn || btn.disabled || btn.dataset.busy === "1") return;
+        btn.dataset.busy = "1";
         setBusyButton(btn, true, "刷新中…");
+        const release = guardBusyButton(btn, "刷新模型", 20000);
         toast("正在从 API 拉取模型列表…");
         try {
-          const updated = await emsoder.refreshModels(p.id);
-          const models = updated.models || [];
-          toast(
-            models.length
-              ? "已刷新 " + models.length + " 个模型: " + models.slice(0, 6).join(", ")
-              : "未返回模型列表（可手动填写）",
-            !models.length
+          const updated = await withUiTimeout(
+            emsoder.refreshModels(p.id),
+            18000,
+            "刷新模型"
           );
-          showProviders();
+          // 主进程现在失败也返回 {ok:false,error}，不再 throw
+          if (updated && updated.ok === false) {
+            toast("刷新失败: " + (updated.error || "未知错误"), true);
+          } else {
+            const models = updated?.models || [];
+            toast(
+              models.length
+                ? "已刷新 " + models.length + " 个模型: " + models.slice(0, 6).join(", ")
+                : "未返回模型列表（可手动填写）",
+              !models.length
+            );
+            // 若当前正在编辑该服务商，立刻把模型列表写回输入框
+            const editingId = $("pfId")?.value?.trim();
+            if (
+              models.length &&
+              editingId &&
+              (editingId === p.id || editingId === updated?.id)
+            ) {
+              $("pfModels").value = models.join(",");
+            }
+          }
         } catch (e) {
-          toast("刷新失败: " + (e.message || e), true);
+          toast("刷新失败: " + (e?.message || e), true);
         } finally {
+          release();
+          btn.dataset.busy = "0";
           setBusyButton(btn, false, null, "刷新模型");
+          // 仅服务商列表弹窗打开时才重绘；若正在编辑弹窗，不要把编辑框盖掉
+          try {
+            if ($("modalProviders")?.classList.contains("show")) await showProviders();
+          } catch {
+            /* ignore redraw errors */
+          }
         }
       };
       el.querySelector('[data-act="del"]').onclick = async () => {
@@ -3072,16 +3679,80 @@
     $("pfType").value = p?.type || "openai";
     $("pfBaseUrl").value = p?.baseUrl || "https://api.openai.com/v1";
     $("pfApiKey").value = p?.apiKey || "";
-    $("pfModels").value = (p?.models || []).join(",");
+    // 打开编辑时默认隐藏 Key
+    const keyInput = $("pfApiKey");
+    if (keyInput) keyInput.type = "password";
+    const eye = $("btnToggleApiKey");
+    if (eye) {
+      eye.textContent = "显示";
+      eye.setAttribute("aria-pressed", "false");
+    }
+    // 占位符 model-a,model-b 不写入；空列表显示空，方便刷新后回填
+    const models = Array.isArray(p?.models) ? p.models.filter(Boolean) : [];
+    $("pfModels").value = models.join(",");
+    $("pfModels").placeholder = models.length
+      ? "model-a,model-b"
+      : "点列表里的「刷新模型」自动填充，或手动填写模型 id";
     $("pfEnabled").value = p?.enabled === false ? "false" : "true";
     openModal("modalEditProvider");
   }
+
+  // API Key 显示 / 隐藏
+  $("btnToggleApiKey")?.addEventListener("click", () => {
+    const input = $("pfApiKey");
+    const btn = $("btnToggleApiKey");
+    if (!input || !btn) return;
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    btn.textContent = show ? "隐藏" : "显示";
+    btn.setAttribute("aria-pressed", show ? "true" : "false");
+  });
+
+  // 编辑弹窗内：刷新模型并直接填入输入框，同时保存到配置
+  $("btnRefreshModelsInEdit")?.addEventListener("click", async () => {
+    const btn = $("btnRefreshModelsInEdit");
+    if (!btn || btn.disabled || btn.dataset.busy === "1") return;
+    const provider = await saveProviderFromForm(false, { setActive: false });
+    if (!provider) return;
+    btn.dataset.busy = "1";
+    setBusyButton(btn, true, "刷新中…");
+    const release = guardBusyButton(btn, "刷新并填入", 20000);
+    try {
+      const updated = await withUiTimeout(
+        emsoder.refreshModels(provider.id),
+        18000,
+        "刷新模型"
+      );
+      if (updated?.ok === false) {
+        toast("刷新失败: " + (updated.error || "未知错误"), true);
+        return;
+      }
+      const models = (updated?.models || []).filter(Boolean);
+      if (!models.length) {
+        toast("未返回模型列表，可手动填写模型 id", true);
+        return;
+      }
+      $("pfModels").value = models.join(",");
+      // 再保存一次，把填入的 models 落盘
+      await saveProviderFromForm(false, { setActive: false });
+      toast("已填入 " + models.length + " 个模型");
+      refreshModelChips();
+      window.EmsoderApp.refreshQuestModels?.();
+    } catch (e) {
+      toast("刷新失败: " + (e?.message || e), true);
+    } finally {
+      release();
+      btn.dataset.busy = "0";
+      setBusyButton(btn, false, null, "刷新并填入");
+    }
+  });
 
   $("pfPreset")?.addEventListener("change", (e) => {
     applyProviderPreset(e.target.value);
   });
 
-  async function saveProviderFromForm(closeAfter = true) {
+  async function saveProviderFromForm(closeAfter = true, opts = {}) {
+    const setActive = opts.setActive !== false;
     const provider = {
       id: $("pfId").value.trim(),
       name: $("pfName").value.trim(),
@@ -3095,13 +3766,18 @@
       toast("请填写 ID / 名称 / Base URL", true);
       return null;
     }
+    const wasActive = state.config?.activeProviderId === provider.id;
     state.config = await emsoder.upsertProvider(provider);
-    if (provider.models[0]) {
-      const keep =
-        state.config.activeModel && provider.models.includes(state.config.activeModel)
-          ? state.config.activeModel
-          : provider.models[0];
-      state.config = await emsoder.setActiveProvider(provider.id, keep);
+    if (setActive && provider.models[0]) {
+      // 只有用户明确保存，或当前服务商本来就是 active，才更新 active model
+      const shouldSetActive = opts.forceActive === true || wasActive || !state.config?.activeProviderId;
+      if (shouldSetActive) {
+        const keep =
+          state.config.activeModel && provider.models.includes(state.config.activeModel)
+            ? state.config.activeModel
+            : provider.models[0];
+        state.config = await emsoder.setActiveProvider(provider.id, keep);
+      }
     }
     refreshModelChips();
     window.EmsoderApp.refreshQuestModels?.();
@@ -3116,16 +3792,25 @@
   $("btnSaveProvider").onclick = () => saveProviderFromForm(true);
   $("btnTestProvider").onclick = async () => {
     const btn = $("btnTestProvider");
-    const provider = await saveProviderFromForm(false);
+    if (!btn || btn.disabled || btn.dataset.busy === "1") return;
+    const provider = await saveProviderFromForm(false, { setActive: false });
     if (!provider) return;
+    btn.dataset.busy = "1";
     setBusyButton(btn, true, "测试中…");
+    const release = guardBusyButton(btn, "测试", 20000);
     toast("正在测试连通性…");
     try {
-      const r = await emsoder.testProvider(provider.id);
-      toast((r.ok ? "✓ " : "✗ ") + (r.message || ""), !r.ok);
+      const r = await withUiTimeout(
+        emsoder.testProvider(provider.id),
+        18000,
+        "测试"
+      );
+      toast((r?.ok ? "✓ " : "✗ ") + (r?.message || "无结果"), !r?.ok);
     } catch (e) {
-      toast("测试失败: " + (e.message || e), true);
+      toast("测试失败: " + (e?.message || e), true);
     } finally {
+      release();
+      btn.dataset.busy = "0";
       setBusyButton(btn, false, null, "测试");
     }
   };
@@ -3133,18 +3818,32 @@
   async function showModels() {
     const list = await emsoder.listProviders();
     const box = $("modelList");
-    box.innerHTML = "";
-    let count = 0;
+    const search = $("modelSearch");
+    const countEl = $("modelSearchCount");
+    const allModels = [];
     for (const p of list.filter((x) => x.enabled !== false)) {
       for (const m of p.models || []) {
-        count++;
+        allModels.push({ provider: p, model: m });
+      }
+    }
+
+    const render = () => {
+      const q = String(search?.value || "").trim().toLowerCase();
+      box.innerHTML = "";
+      let shown = 0;
+      for (const item of allModels) {
+        const p = item.provider;
+        const m = item.model;
+        const hay = `${m} ${p.name} ${p.id} ${p.baseUrl}`.toLowerCase();
+        if (q && !hay.includes(q)) continue;
+        shown++;
         const el = document.createElement("div");
         el.className =
           "list-item" +
           (state.config?.activeProviderId === p.id && state.config?.activeModel === m
             ? " active"
             : "");
-        el.innerHTML = `<div class="meta"><div class="name">${escapeHtml(m)}</div><div class="desc">${escapeHtml(p.name)}</div></div>`;
+        el.innerHTML = `<div class="meta"><div class="name">${escapeHtml(m)}</div><div class="desc">${escapeHtml(p.name)} · ${escapeHtml(p.id)}</div></div>`;
         el.onclick = async () => {
           state.config = await emsoder.setActiveProvider(p.id, m);
           refreshModelChips();
@@ -3154,11 +3853,21 @@
         };
         box.appendChild(el);
       }
+      if (countEl) countEl.textContent = String(shown) + "/" + String(allModels.length);
+      if (!allModels.length) {
+        box.innerHTML = '<div class="tree-empty">请先添加服务商并填写 models</div>';
+      } else if (!shown) {
+        box.innerHTML = '<div class="tree-empty">没有匹配的模型</div>';
+      }
+    };
+
+    if (search) {
+      search.value = "";
+      search.oninput = render;
     }
-    if (!count) {
-      box.innerHTML = '<div class="tree-empty">请先添加服务商并填写 models</div>';
-    }
+    render();
     openModal("modalModels");
+    setTimeout(() => search?.focus?.(), 60);
   }
 
   function refreshAutoApproveBtn() {
@@ -3634,9 +4343,22 @@
 
   async function applySessionUpdate(s) {
     state.branchMeta = s.branchMeta || [];
+    state.activeSessionId = s.id || null;
     cancelEditMode();
     renderHistory(s.messages || [], s.branchMeta);
-    renderChatChanges(s.fileChanges || []);
+    renderChatChanges(s.fileChanges || [], s.id || null);
+    updateChatHeader(s);
+  }
+
+  /** Chat header 同步当前会话标题/模式 */
+  function updateChatHeader(s) {
+    const titleEl = $("chatTitle");
+    const subEl = $("chatSub");
+    if (titleEl) titleEl.textContent = s?.title || "AI 助手";
+    if (subEl) {
+      subEl.textContent =
+        s?.mode === "ask" ? "Ask · 只问答" : "Agent · 可读写文件";
+    }
   }
   $("btnNewChat").onclick = async () => {
     try {
@@ -3648,8 +4370,31 @@
     }
   };
   $("btnClearChat").onclick = async () => {
-    applySessionUpdate(await emsoder.clearSession());
+    if (!(await EmsoderDom.showConfirm("清空当前会话？（会话保留，标题重置为「新对话」）"))) return;
+    try {
+      applySessionUpdate(await emsoder.clearSession());
+      toast("已清空会话");
+      await refreshSessionsSideIfVisible();
+    } catch (e) {
+      toast(e.message || e, true);
+    }
   };
+  $("btnAcceptAllChanges")?.addEventListener("click", async () => {
+    const files = state.fileChanges || [];
+    if (!files.length) {
+      toast("没有本轮改动");
+      return;
+    }
+    if (!(await EmsoderDom.showConfirm("确认本轮改动并收起面板？（不会撤销文件）"))) return;
+    try {
+      const sessionId = state.fileChangesSessionId || null;
+      const r = await emsoder.acceptAllAgentChanges(sessionId);
+      renderChatChanges(r.fileChanges || [], sessionId);
+      toast("已确认，面板已收起");
+    } catch (err) {
+      toast(err.message || String(err), true);
+    }
+  });
   $("btnRejectAllChanges")?.addEventListener("click", async () => {
     const active = (state.fileChanges || []).filter((f) => !f.rejected);
     if (!active.length) {
@@ -3658,8 +4403,9 @@
     }
     if (!(await EmsoderDom.showConfirm(`回滚本轮 ${active.length} 个文件到写前内容？`))) return;
     try {
-      const r = await emsoder.rejectAllAgentChanges();
-      renderChatChanges(r.fileChanges || []);
+      const sessionId = state.fileChangesSessionId || null;
+      const r = await emsoder.rejectAllAgentChanges(sessionId);
+      renderChatChanges(r.fileChanges || [], sessionId);
       // 刷新已打开的标签
       for (const f of active) {
         if (!f.path || !state.tabs.some((t) => t.path === f.path)) continue;
@@ -3679,7 +4425,10 @@
         }
       }
       renderTabs();
-      toast("本轮改动已全部撤销");
+      const results = Array.isArray(r?.results) ? r.results : [];
+      const failed = results.filter((x) => x && x.ok === false).length;
+      const done = results.filter((x) => x && x.ok !== false).length;
+      toast(failed ? `已撤销 ${done} 个，${failed} 个未撤销（文件已变化）` : "本轮改动已全部撤销", !!failed);
     } catch (err) {
       toast(err.message || String(err), true);
     }
@@ -3946,6 +4695,7 @@
       else if (state.sideView === "git") renderGitSide();
       else if (state.sideView === "skills") await renderSkillsSide();
       else if (state.sideView === "memory") await renderMemorySide();
+      else if (state.sideView === "mcp") await renderMcpSide();
       else if (state.sideView === "settings") {
         openModal("modalSettings");
         fillSettingsForm();
@@ -4009,25 +4759,45 @@
       if ($("sbStatus")) $("sbStatus").textContent = msg.text || "就绪";
     }
   }
+  // agent 写盘事件合并：burst 内（300ms）只做一次 git/资源管理器/mention 刷新，
+  // 避免每次写文件都触发 6 个 git 子进程 + 整树重绘
+  let _fsChangeTimer = null;
+  let _fsChangePendingTabs = new Set();
   function _onAgentFsChange(msg) {
-    // Invalidate @ mention file list so new/deleted files appear immediately
-    _mentionCachePromise = null;
-    state.mention.ts = 0;
-    if (msg.path && state.tabs.some((t) => t.path === msg.path)) {
-      emsoder.readFile(msg.path).then(async (f) => {
-        const tab = state.tabs.find((t) => t.path === f.path);
-        if (!tab) return;
-        if (tab.dirty && state.activePath === f.path) { toast("磁盘已更新，本地有未保存修改，未自动覆盖", true); return; }
-        tab.content = f.content;
-        tab.original = f.content;
-        tab.dirty = false;
-        if (state.activePath === f.path) await EmsoderEditor.openDocument({ path: f.path, content: f.content });
-        renderTabs();
-      });
-    }
-    if (state.sideView === "explorer") renderExplorer();
-    EmsoderPanels.refreshGit?.();
-    refreshGitBranch();
+    if (msg.path) _fsChangePendingTabs.add(msg.path);
+    if (_fsChangeTimer) return;
+    _fsChangeTimer = setTimeout(async () => {
+      _fsChangeTimer = null;
+      const paths = [..._fsChangePendingTabs];
+      _fsChangePendingTabs = new Set();
+      // Invalidate @ mention file list so new/deleted files appear immediately
+      _mentionCachePromise = null;
+      state.mention.ts = 0;
+      for (const p of paths) {
+        if (!state.tabs.some((t) => t.path === p)) continue;
+        try {
+          const f = await emsoder.readFile(p);
+          const tab = state.tabs.find((t) => t.path === f.path);
+          if (!tab) continue;
+          if (tab.dirty && state.activePath === f.path) {
+            toast("磁盘已更新，本地有未保存修改，未自动覆盖", true);
+            continue;
+          }
+          tab.content = f.content;
+          tab.original = f.content;
+          tab.dirty = false;
+          if (state.activePath === f.path) {
+            await EmsoderEditor.openDocument({ path: f.path, content: f.content });
+          }
+          renderTabs();
+        } catch {
+          /* 文件可能被删除 */
+        }
+      }
+      if (state.sideView === "explorer") renderExplorer();
+      EmsoderPanels.refreshGit?.();
+      refreshGitBranch();
+    }, 300);
   }
 
   emsoder.onAgentEvent((msg) => {
@@ -4053,7 +4823,7 @@
         state.activeToolRow = addToolFold("start", msg.name, "→ " + (msg.name || "") + "\n" + (msg.args || ""));
         setGenerating(true, "工具 · " + (msg.name || "running")); break;
       case "tool_end":       updateToolFoldEnd(msg.name, msg.result || ""); break;
-      case "file_changes":   renderChatChanges(msg.fileChanges || []); break;
+      case "file_changes":   renderChatChanges(msg.fileChanges || [], msg.sessionId || null); break;
       case "assistant_done":
         finishReasoningFold(); finalizeStreamingBubble(true);
         state.activeToolRow = null; setGenerating(false, "完成");
@@ -4062,9 +4832,13 @@
       case "session":
         if (msg.session) {
           state.branchMeta = msg.session.branchMeta || [];
-          if (Array.isArray(msg.session.fileChanges)) renderChatChanges(msg.session.fileChanges);
+          state.activeSessionId = msg.session.id || null;
+          updateChatHeader(msg.session);
+          if (Array.isArray(msg.session.fileChanges)) renderChatChanges(msg.session.fileChanges, msg.session.id || null);
           if (!state.generating) renderHistory(msg.session.messages || [], msg.session.branchMeta);
           else try { refreshChatToc(); } catch { /* ignore */ }
+          // 侧栏数据已由主进程下发：静默刷新会话列表（标题/消息数/排序）
+          if (Array.isArray(msg.sessions)) refreshSessionsSideIfVisible();
         }
         break;
       case "error":          _onAgentError(msg); break;
@@ -4078,6 +4852,11 @@
     state.pendingConfirmId = data.id;
     $("confirmMsg").textContent = data.message;
     $("confirmBar").classList.add("show");
+  });
+
+  emsoder.onMcpEvent?.((msg) => {
+    // server 状态/工具列表变化 → 静默刷新 MCP 侧栏
+    if (state.sideView === "mcp") refreshMcpSideIfVisible();
   });
 
   emsoder.onMenu("save", saveActive);
@@ -4194,8 +4973,12 @@
         const tab = state.tabs.find((t) => t.path === state.activePath);
         if (!tab) return;
         tab.content = EmsoderEditor.getValue();
-        tab.dirty = tab.content !== tab.original;
-        renderTabs();
+        const dirty = tab.content !== tab.original;
+        // 仅 dirty 状态翻转时重绘 tab DOM，避免每次按键全量重建
+        if (dirty !== tab.dirty) {
+          tab.dirty = dirty;
+          renderTabs();
+        }
         scheduleDraftSave();
       });
 
@@ -4208,10 +4991,13 @@
       refreshContextStats();
       if (st.session) {
         state.branchMeta = st.session.branchMeta || [];
+        state.activeSessionId = st.session.id || null;
         renderHistory(st.session.messages || [], st.session.branchMeta);
-        renderChatChanges(st.session.fileChanges || []);
+        renderChatChanges(st.session.fileChanges || [], st.session.id || null);
+        updateChatHeader(st.session);
       } else {
-        renderChatChanges([]);
+        renderChatChanges([], null);
+        updateChatHeader(null);
       }
       // 启动默认侧栏：会话置顶
       state.sideView = "sessions";
@@ -4241,6 +5027,12 @@
             state.config?.completionEnabled !== false,
             state.config?.completionDebounceMs
           );
+          // 全语言关键词补全（零依赖，不覆盖 TS/JS 等内置）
+          try {
+            window.EmsoderLangSuggest?.init?.();
+          } catch {
+            /* ignore */
+          }
           if (state.workspace) {
             // delay slightly so UI paints first
             setTimeout(() => indexWorkspaceLsp(true), 400);

@@ -84,22 +84,69 @@
       const col = document.createElement("div");
       col.innerHTML = `<div class="quest-col-title"><span>${labels[key]}</span><span class="n">${items.length}</span></div>`;
       for (const q of items) {
-        const card = document.createElement("div");
-        card.className =
-          "quest-card" + (q.id === state.activeId ? " active" : "");
-        card.innerHTML = `
+      const card = document.createElement("div");
+      card.className =
+        "quest-card" + (q.id === state.activeId ? " active" : "");
+      card.innerHTML = `
           <div class="t"></div>
           <div class="g"></div>
+          <div class="r"></div>
           <div class="meta">
             <span class="quest-badge ${q.status}">${STATUS_LABEL[q.status] || q.status}</span>
             <span>${q.mode === "experts" ? "Experts" : "Agent"}</span>
             <span>${q.progress || 0}%</span>
             <span>${q.changeCount || 0} 文件</span>
-          </div>`;
-        card.querySelector(".t").textContent = q.title || "未命名";
-        card.querySelector(".g").textContent = q.goal || "";
-        card.onclick = () => selectQuest(q.id);
-        col.appendChild(card);
+          </div>
+          <div class="card-actions"></div>`;
+      card.querySelector(".t").textContent = q.title || "未命名";
+      card.querySelector(".g").textContent = q.goal || "";
+      const remarkEl = card.querySelector(".r");
+      if (q.remark) {
+        remarkEl.textContent = "备注: " + q.remark;
+        remarkEl.title = q.remark;
+      }
+      card.onclick = () => selectQuest(q.id);
+      // 错误状态可重试；hover 删除
+      const actions = card.querySelector(".card-actions");
+      if (q.status === "error") {
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "btn tb-mini primary";
+        retry.textContent = "重试";
+        retry.onclick = async (e) => {
+          e.stopPropagation();
+          try {
+            await emsoder.questStart(q.id);
+            toast("已重新启动 " + (q.title || "任务"));
+          } catch (err) {
+            toast(err.message || err, true);
+          }
+          await refreshBoard();
+        };
+        actions.appendChild(retry);
+      }
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "btn tb-mini danger";
+      del.textContent = "删除";
+      del.onclick = async (e) => {
+        e.stopPropagation();
+        if (!(await EmsoderDom.showConfirm("删除 Quest「" + (q.title || "未命名") + "」？"))) return;
+        try {
+          await emsoder.questRemove(q.id);
+          if (state.activeId === q.id) {
+            state.activeId = null;
+            state.quest = null;
+            renderConsole();
+          }
+        } catch (err) {
+          toast(err.message || err, true);
+        }
+        await refreshBoard();
+      };
+      actions.appendChild(del);
+      col.appendChild(card);
+
       }
       if (!items.length) {
         const empty = document.createElement("div");
@@ -120,6 +167,50 @@
     renderBoard();
     renderConsole();
     enterQuestMode(true);
+    // 载入备注到补充输入框
+    const fi = $("questFollowInput");
+    if (fi && state.quest) fi.value = state.quest.remark || "";
+  }
+
+  /** 事件驱动的全量刷新：200ms trailing 合并密集事件 */
+  let _questRefreshTimer = null;
+  let _questRefreshRunning = false;
+  function scheduleQuestRefresh() {
+    if (_questRefreshTimer) return;
+    _questRefreshTimer = setTimeout(async () => {
+      _questRefreshTimer = null;
+      if (_questRefreshRunning) return;
+      _questRefreshRunning = true;
+      try {
+        if (state.activeId) {
+          state.quest = await emsoder.questGet(state.activeId);
+          renderConsole();
+        }
+        await refreshBoard();
+      } catch {
+        /* ignore */
+      } finally {
+        _questRefreshRunning = false;
+      }
+    }, 200);
+  }
+
+  async function saveRemark() {
+    if (!state.activeId) {
+      toast("请先选择任务", true);
+      return;
+    }
+    const v = ($("questFollowInput")?.value || "").trim();
+    try {
+      const r = await emsoder.questUpdate(state.activeId, { remark: v });
+      if (r) {
+        state.quest = r;
+        toast(v ? "备注已保存" : "备注已清空");
+        await refreshBoard();
+      }
+    } catch (e) {
+      toast(e.message || e, true);
+    }
   }
 
   function setShellMode(mode) {
@@ -492,6 +583,7 @@
     $("btnQuestStart")?.addEventListener("click", startActive);
     $("btnQuestStop")?.addEventListener("click", stopActive);
     $("btnQuestDone")?.addEventListener("click", markDone);
+    $("btnQuestRemarkSave")?.addEventListener("click", saveRemark);
     $("btnQuestRefresh")?.addEventListener("click", async () => {
       if (state.activeId) {
         state.quest = await emsoder.questGet(state.activeId);
@@ -587,11 +679,7 @@
         ev.type === "error"
       ) {
         state.liveDelta = "";
-        if (state.activeId) {
-          state.quest = await emsoder.questGet(state.activeId);
-          renderConsole();
-        }
-        await refreshBoard();
+        // 即时 UI 反馈（toast / tab 切换 / 运行标志）
         if (ev.type === "file_change") setRightTab("changes");
         if (ev.type === "plan" || ev.type === "step") setRightTab("plan");
         if (ev.type === "done") {
@@ -603,6 +691,9 @@
           if (ev.status === "error") toast(ev.error || "Quest 失败", true);
         }
         if (ev.type === "error") toast(ev.error || "错误", true);
+        // 全量 refetch（questGet + renderConsole + refreshBoard）节流合并：
+        // 密集事件（status/step 每轮多次）只做一次拉取
+        scheduleQuestRefresh();
       }
     });
 

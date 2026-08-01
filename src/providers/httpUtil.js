@@ -34,24 +34,52 @@ function mergeAbortSignals(userSignal, timeoutMs) {
   let timer = null;
   if (timeoutMs > 0) {
     timer = setTimeout(() => {
-      ctrl.abort(
-        Object.assign(new Error("Request timeout"), { name: "TimeoutError" })
-      );
+      try {
+        ctrl.abort(
+          Object.assign(new Error("Request timeout"), { name: "TimeoutError" })
+        );
+      } catch {
+        // older Node/Electron: abort() without reason
+        try {
+          ctrl.abort();
+        } catch {
+          /* ignore */
+        }
+      }
     }, timeoutMs);
   }
   const cleanup = () => {
-    if (timer) clearTimeout(timer);
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
   };
   if (userSignal) {
     if (userSignal.aborted) {
       cleanup();
-      ctrl.abort(userSignal.reason);
+      try {
+        ctrl.abort(userSignal.reason);
+      } catch {
+        try {
+          ctrl.abort();
+        } catch {
+          /* ignore */
+        }
+      }
     } else {
       userSignal.addEventListener(
         "abort",
         () => {
           cleanup();
-          ctrl.abort(userSignal.reason);
+          try {
+            ctrl.abort(userSignal.reason);
+          } catch {
+            try {
+              ctrl.abort();
+            } catch {
+              /* ignore */
+            }
+          }
         },
         { once: true }
       );
@@ -59,6 +87,45 @@ function mergeAbortSignals(userSignal, timeoutMs) {
   }
   ctrl.signal.addEventListener("abort", cleanup, { once: true });
   return { signal: ctrl.signal, cleanup };
+}
+
+/**
+ * fetch with hard timeout + optional external AbortSignal.
+ * 超时覆盖到拿到响应头为止；读 body 由调用方负责（可再包 withHardTimeout）。
+ * 注意：绝不能在这里 getReader()/text()，否则会锁死 body，导致后续 res.text() 失败。
+ */
+async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+  const ms = Math.max(1000, Number(timeoutMs) || 15000);
+  const { signal: userSignal, ...rest } = options || {};
+  const { signal, cleanup } = mergeAbortSignals(userSignal, ms);
+  try {
+    const res = await fetch(url, { ...rest, signal });
+    // 响应头已到：清连接阶段计时器；body 读取由调用方控制
+    // 再保留一小段 abort 窗口，防止调用方忘记读 body 时连接悬挂太久
+    setTimeout(() => {
+      try {
+        cleanup();
+      } catch {
+        /* ignore */
+      }
+    }, Math.min(ms, 15000));
+    return res;
+  } catch (err) {
+    cleanup();
+    const name = err?.name || "";
+    const msg = String(err?.message || err || "");
+    if (
+      name === "AbortError" ||
+      name === "TimeoutError" ||
+      /timeout|aborted/i.test(msg)
+    ) {
+      throw Object.assign(new Error(`请求超时（${Math.round(ms / 1000)}s）`), {
+        name: "TimeoutError",
+        cause: err,
+      });
+    }
+    throw err;
+  }
 }
 
 /**
@@ -146,5 +213,6 @@ module.exports = {
   isRetryableError,
   sleep,
   mergeAbortSignals,
+  fetchWithTimeout,
   classifyProviderError,
 };

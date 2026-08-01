@@ -19,7 +19,14 @@ class SessionStore {
     this.activeId = null;
     this._saveTimer = null;
     this._dirty = false;
+    this.debounceMs = SAVE_DEBOUNCE_MS;
     this.load();
+  }
+
+  /** 运行中加大防抖（agent 每轮多次写盘），空闲恢复；退出仍 flush 兜底 */
+  setDebounceMs(ms) {
+    const v = Number(ms);
+    if (Number.isFinite(v) && v >= 100) this.debounceMs = v;
   }
 
   load() {
@@ -61,9 +68,10 @@ class SessionStore {
         return copy;
       });
       const tmp = p + ".tmp";
+      // 紧凑序列化：减少主线程 stringify 耗时与写盘体积
       fs.writeFileSync(
         tmp,
-        JSON.stringify({ activeId: this.activeId, sessions: list }, null, 2),
+        JSON.stringify({ activeId: this.activeId, sessions: list }),
         "utf8"
       );
       fs.renameSync(tmp, p);
@@ -91,7 +99,7 @@ class SessionStore {
   save() {
     this._dirty = true;
     if (this._saveTimer) return;
-    this._saveTimer = setTimeout(() => this.saveNow(), SAVE_DEBOUNCE_MS);
+    this._saveTimer = setTimeout(() => this.saveNow(), this.debounceMs);
   }
 
   flush() {
@@ -111,6 +119,16 @@ class SessionStore {
       return this.sessions.get(this.activeId);
     }
     return this.create("agent");
+  }
+
+  getById(id) {
+    return id && this.sessions.has(id) ? this.sessions.get(id) : undefined;
+  }
+
+  _resolveSession(sessionOrId) {
+    if (sessionOrId && typeof sessionOrId === "object") return sessionOrId;
+    if (sessionOrId && this.sessions.has(sessionOrId)) return this.sessions.get(sessionOrId);
+    return this.getActive();
   }
 
   setActive(id) {
@@ -140,16 +158,16 @@ class SessionStore {
   }
 
   /** 新一轮用户消息开始时清空本轮变更，便于「本轮摘要 / 一键撤销」 */
-  beginFileChangeTurn() {
-    const session = this.getActive();
+  beginFileChangeTurn(sessionId = null) {
+    const session = this._resolveSession(sessionId);
     session.fileChanges = [];
     session.updatedAt = Date.now();
     this.save();
-    return session.fileChanges;
+    return session;
   }
 
-  recordFileChange(change) {
-    const session = this.getActive();
+  recordFileChange(change, sessionId = null) {
+    const session = this._resolveSession(sessionId);
     if (!Array.isArray(session.fileChanges)) session.fileChanges = [];
     const abs = change.path;
     let row = session.fileChanges.find((f) => f.path === abs);
@@ -174,8 +192,8 @@ class SessionStore {
     return row;
   }
 
-  rejectChange(filePath) {
-    const session = this.getActive();
+  rejectChange(filePath, sessionId = null) {
+    const session = this._resolveSession(sessionId);
     if (!Array.isArray(session.fileChanges)) return null;
     const row = session.fileChanges.find((f) => f.path === filePath);
     if (!row) return null;
@@ -185,14 +203,34 @@ class SessionStore {
     return row;
   }
 
-  getFileChanges() {
-    const session = this.getActive();
+  removeFileChange(filePath, sessionId = null) {
+    const session = this._resolveSession(sessionId);
+    if (!Array.isArray(session.fileChanges)) return false;
+    const before = session.fileChanges.length;
+    session.fileChanges = session.fileChanges.filter((f) => f.path !== filePath);
+    if (session.fileChanges.length === before) return false;
+    session.updatedAt = Date.now();
+    this.save();
+    return true;
+  }
+
+  /** 确认本轮改动：清空摘要列表（不回滚文件） */
+  clearFileChanges(sessionId = null) {
+    const session = this._resolveSession(sessionId);
+    session.fileChanges = [];
+    session.updatedAt = Date.now();
+    this.save();
+    return session.fileChanges;
+  }
+
+  getFileChanges(sessionId = null) {
+    const session = this._resolveSession(sessionId);
     return Array.isArray(session.fileChanges) ? session.fileChanges : [];
   }
 
   /** 给渲染进程用：不含 before/after 正文，避免 IPC 体积爆炸 */
-  publicFileChanges(session) {
-    const s = session || this.getActive();
+  publicFileChanges(sessionOrId = null) {
+    const s = this._resolveSession(sessionOrId);
     return (s.fileChanges || []).map((f) => ({
       path: f.path,
       relative: f.relative || f.path,
@@ -205,8 +243,8 @@ class SessionStore {
    * 单文件 before/after（按需 IPC，带长度上限）。
    * @returns {null | { path, relative, kind, rejected, before, after, truncated }}
    */
-  getFileChangeBodies(filePath, maxChars = 120_000) {
-    const session = this.getActive();
+  getFileChangeBodies(filePath, maxChars = 120_000, sessionId = null) {
+    const session = this._resolveSession(sessionId);
     if (!Array.isArray(session.fileChanges) || !filePath) return null;
     const row = session.fileChanges.find((f) => f.path === filePath);
     if (!row) return null;
@@ -260,8 +298,7 @@ class SessionStore {
     session.activeLeafId = msg.id;
     session.updatedAt = Date.now();
     if (session.title === "新对话" && message.role === "user") {
-      session.title =
-        String(message.content).replace(/\s+/g, " ").slice(0, 40) || "新对话";
+      session.title = makeSessionTitle(message.content);
     }
     this.save();
     return msg;
@@ -289,8 +326,7 @@ class SessionStore {
     session.activeLeafId = userMsg.id;
     session.updatedAt = Date.now();
     if (session.title === "新对话" || !session.title) {
-      session.title =
-        String(userMsg.content).replace(/\s+/g, " ").slice(0, 40) || "新对话";
+      session.title = makeSessionTitle(userMsg.content);
     }
     this.save();
     return {
@@ -381,9 +417,37 @@ class SessionStore {
     session.messages = [];
     session.activeLeafId = null;
     session.fileChanges = [];
+    // 清空后重置标题：后续消息可重新生成标题
+    session.title = "新对话";
     session.updatedAt = Date.now();
     this.save();
     return session;
+  }
+
+  /** 重命名会话。空/纯空白标题回退「新对话」。 */
+  rename(id, title) {
+    const session = this.sessions.get(id);
+    if (!session) return null;
+    const t = makeSessionTitle(title);
+    session.title = t;
+    session.updatedAt = Date.now();
+    this.save();
+    return session;
+  }
+
+  /** 可见消息数：只统计 user / assistant 且非「调用工具:」占位（排除 tool/reasoning/错误占位） */
+  visibleMessageCount(session) {
+    const s = session || this.getActive();
+    if (!Array.isArray(s.messages)) return 0;
+    let n = 0;
+    for (const m of s.messages) {
+      if (!m) continue;
+      const role = m.role || "";
+      if (role !== "user" && role !== "assistant") continue;
+      if (role === "assistant" && /^调用工具\s*[:：]/.test(String(m.content || "").trim())) continue;
+      n++;
+    }
+    return n;
   }
 
   remove(id) {
@@ -470,6 +534,17 @@ function migrateSession(s) {
   };
 }
 
+/**
+ * 从用户消息生成会话标题：trim + 折叠空白 + 截断加省略号。
+ */
+function makeSessionTitle(text) {
+  const t = String(text ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!t) return "新对话";
+  return t.length > 22 ? t.slice(0, 22) + "…" : t;
+}
+
 function getChildren(session, parentId) {
   const pid = parentId || null;
   return (session.messages || [])
@@ -511,4 +586,5 @@ module.exports = {
   getChildren,
   deepestLeaf,
   migrateSession,
+  makeSessionTitle,
 };

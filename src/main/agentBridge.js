@@ -28,10 +28,37 @@ function buildRunnerEvents(opts) {
   const sessions = opts.sessions;
   const publicSession = opts.publicSession;
 
+  /**
+   * 流式 delta 批处理：80ms / 4KB 合并后再推送，
+   * 避免每 token 一次 IPC（渲染端 rAF 节流保留）。
+   */
+  let deltaBuf = "";
+  let deltaTimer = null;
+  function pushDelta(type, text) {
+    deltaBuf += text;
+    if (deltaBuf.length >= 4096) {
+      flushDelta();
+      return;
+    }
+    if (!deltaTimer) {
+      deltaTimer = setTimeout(flushDelta, 80);
+    }
+  }
+  function flushDelta() {
+    if (deltaTimer) {
+      clearTimeout(deltaTimer);
+      deltaTimer = null;
+    }
+    if (!deltaBuf) return;
+    const text = deltaBuf;
+    deltaBuf = "";
+    send("agent:event", { type: "assistant_delta", text });
+  }
+
   return {
     send,
     events: {
-      onText: (t) => send("agent:event", { type: "assistant_delta", text: t }),
+      onText: (t) => pushDelta("assistant_delta", t),
       onReasoning: (t) =>
         send("agent:event", { type: "reasoning_delta", text: t }),
       onToolStart: (name, args) =>
@@ -60,6 +87,7 @@ function buildRunnerEvents(opts) {
         });
       },
       onDone: () => {
+        flushDelta(); // 确保流式末尾文本送达
         send("agent:event", { type: "assistant_done" });
         send("agent:event", {
           type: "context_stats",
@@ -82,10 +110,11 @@ function buildRunnerEvents(opts) {
       confirm: opts.confirm,
       onFsChange: (filePath, kind) =>
         send("agent:event", { type: "fs_change", path: filePath, kind }),
-      onFileChanges: (fileChanges) =>
+      onFileChanges: (fileChanges, sessionId) =>
         send("agent:event", {
           type: "file_changes",
           fileChanges: Array.isArray(fileChanges) ? fileChanges : [],
+          sessionId: sessionId || sessions.getActive()?.id || null,
         }),
       ptyBridge: opts.ptyBridge || null,
     },

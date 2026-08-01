@@ -157,7 +157,7 @@ const DEFAULT_CONFIG = {
    * 仅高危险终端命令（非 git/npm/ls 等白名单）仍询问。
    * autoRunTools 可以额外跳过危险命令。
    */
-  autoApproveSafe: false,
+  autoApproveSafe: true,
   /** Chat 默认折叠工具调用与思考过程，只突出最终回答 */
   collapseProcess: true,
   terminalRunMode: "askEveryTime",
@@ -202,6 +202,8 @@ const DEFAULT_CONFIG = {
   memoriesEnabled: false,
   /** Max memories to keep (LRU by importance + recency) */
   memoriesMaxCount: 500,
+  /** MCP servers (stdio): { id, name, command, args: [], env: {}, enabled } */
+  mcpServers: [],
 };
 
 function configPath() {
@@ -240,6 +242,47 @@ function sanitizeConfig(raw) {
   // Other arrays
   out.skillsDirs = Array.isArray(raw.skillsDirs) ? raw.skillsDirs.filter((s) => typeof s === "string") : [];
   out.skillsDisabled = Array.isArray(raw.skillsDisabled) ? raw.skillsDisabled.filter((s) => typeof s === "string") : [];
+  // MCP servers: keep entries with id + (command or url); infer type like zcode
+  out.mcpServers = Array.isArray(raw.mcpServers)
+    ? raw.mcpServers
+        .filter(
+          (s) =>
+            s &&
+            typeof s.id === "string" &&
+            (typeof s.command === "string" || typeof s.url === "string")
+        )
+        .map((s) => {
+          const hasCmd = typeof s.command === "string" && s.command.trim() !== "";
+          const hasUrl = typeof s.url === "string" && s.url.trim() !== "";
+          const type =
+            s.type === "http" || s.type === "stdio"
+              ? s.type
+              : hasUrl && !hasCmd
+                ? "http"
+                : hasCmd && !hasUrl
+                  ? "stdio"
+                  : "http"; // 两者都有时 http 优先
+          const timeoutMs = Number(s.timeoutMs);
+          return {
+            id: s.id,
+            name: typeof s.name === "string" && s.name ? s.name : s.id,
+            type,
+            command: type === "stdio" ? String(s.command || "") : "",
+            args: Array.isArray(s.args) ? s.args.filter((a) => typeof a === "string") : [],
+            cwd: typeof s.cwd === "string" ? s.cwd : "",
+            env: s.env && typeof s.env === "object" && !Array.isArray(s.env) ? s.env : {},
+            url: type === "http" ? String(s.url || "") : "",
+            headers:
+              s.headers && typeof s.headers === "object" && !Array.isArray(s.headers)
+                ? s.headers
+                : {},
+            enabled: s.enabled !== false,
+            timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0
+              ? Math.min(300_000, Math.max(1_000, Math.round(timeoutMs)))
+              : 30_000,
+          };
+        })
+    : [];
   return out;
 }
 

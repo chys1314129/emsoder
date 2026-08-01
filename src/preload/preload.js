@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld("emsoder", {
   clearSession: () => ipcRenderer.invoke("session:clear"),
   removeSession: (id) => ipcRenderer.invoke("session:remove", id),
   removeSessions: (ids) => ipcRenderer.invoke("session:remove-many", ids),
+  renameSession: (id, title) => ipcRenderer.invoke("session:rename", { id, title }),
   branchEdit: (payload) => ipcRenderer.invoke("session:branch-edit", payload),
   switchBranch: (messageId, direction) =>
     ipcRenderer.invoke("session:switch-branch", { messageId, direction }),
@@ -61,12 +62,16 @@ contextBridge.exposeInMainWorld("emsoder", {
   stopAgent: () => ipcRenderer.invoke("agent:stop"),
   isAgentRunning: () => ipcRenderer.invoke("agent:is-running"),
   getAgentQueueStatus: () => ipcRenderer.invoke("agent:queue-status"),
-  getAgentFileChanges: () => ipcRenderer.invoke("agent:file-changes"),
-  getAgentFileChangeDiff: (filePath) =>
-    ipcRenderer.invoke("agent:file-change-diff", { path: filePath }),
-  rejectAgentChange: (filePath) =>
-    ipcRenderer.invoke("agent:reject-change", { path: filePath }),
-  rejectAllAgentChanges: () => ipcRenderer.invoke("agent:reject-all-changes"),
+  getAgentFileChanges: (sessionId) =>
+    ipcRenderer.invoke("agent:file-changes", { sessionId }),
+  getAgentFileChangeDiff: (filePath, sessionId) =>
+    ipcRenderer.invoke("agent:file-change-diff", { path: filePath, sessionId }),
+  rejectAgentChange: (filePath, sessionId) =>
+    ipcRenderer.invoke("agent:reject-change", { path: filePath, sessionId }),
+  rejectAllAgentChanges: (sessionId) =>
+    ipcRenderer.invoke("agent:reject-all-changes", { sessionId }),
+  acceptAllAgentChanges: (sessionId) =>
+    ipcRenderer.invoke("agent:accept-all-changes", { sessionId }),
   respondConfirm: (id, allow) =>
     ipcRenderer.invoke("agent:confirm-response", { id, allow }),
   inlineEdit: (payload) => ipcRenderer.invoke("agent:inline-edit", payload),
@@ -147,6 +152,18 @@ contextBridge.exposeInMainWorld("emsoder", {
   searchMemories: (query, topK) => ipcRenderer.invoke("memory:search", { query, topK }),
   extractMemoriesNow: () => ipcRenderer.invoke("memory:extract-now"),
   clearMemories: () => ipcRenderer.invoke("memory:clear"),
+
+  // ---- MCP ----
+  listMcpServers: () => ipcRenderer.invoke("mcp:list"),
+  upsertMcpServer: (server) => ipcRenderer.invoke("mcp:upsert", server),
+  removeMcpServer: (id) => ipcRenderer.invoke("mcp:remove", id),
+  connectMcp: (id) => ipcRenderer.invoke("mcp:connect", id),
+  disconnectMcp: (id) => ipcRenderer.invoke("mcp:disconnect", id),
+  onMcpEvent: (cb) => {
+    const listener = (_e, data) => cb(data);
+    ipcRenderer.on("mcp:event", listener);
+    return () => ipcRenderer.removeListener("mcp:event", listener);
+  },
 
   getTsconfig: () => ipcRenderer.invoke("lsp:tsconfig"),
 

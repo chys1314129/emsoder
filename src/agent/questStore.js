@@ -22,7 +22,14 @@ class QuestStore {
     this.activeId = null;
     this._saveTimer = null;
     this._dirty = false;
+    this.debounceMs = SAVE_DEBOUNCE_MS;
     this.load();
+  }
+
+  /** 运行中加大防抖（quest 每轮多次写盘），空闲恢复；退出仍 flush 兜底 */
+  setDebounceMs(ms) {
+    const v = Number(ms);
+    if (Number.isFinite(v) && v >= 100) this.debounceMs = v;
   }
 
   load() {
@@ -34,6 +41,7 @@ class QuestStore {
         if (Array.isArray(q.messages) && q.messages.length > MAX_QUEST_MESSAGES) {
           q.messages = q.messages.slice(-MAX_QUEST_MESSAGES);
         }
+        if (typeof q.remark !== "string") q.remark = "";
         this.quests.set(q.id, q);
       }
       this.activeId = data.activeId || null;
@@ -57,9 +65,10 @@ class QuestStore {
             : [],
         }));
       const tmp = p + ".tmp";
+      // 紧凑序列化：减少主线程 stringify 耗时与写盘体积
       fs.writeFileSync(
         tmp,
-        JSON.stringify({ activeId: this.activeId, quests }, null, 2),
+        JSON.stringify({ activeId: this.activeId, quests }),
         "utf8"
       );
       fs.renameSync(tmp, p);
@@ -72,7 +81,7 @@ class QuestStore {
   save() {
     this._dirty = true;
     if (this._saveTimer) return;
-    this._saveTimer = setTimeout(() => this.saveNow(), SAVE_DEBOUNCE_MS);
+    this._saveTimer = setTimeout(() => this.saveNow(), this.debounceMs);
   }
 
   flush() {
@@ -137,10 +146,11 @@ class QuestStore {
       title: (title || g.slice(0, 48) || "新 Quest").trim(),
       goal: g,
       mode: mode === "experts" ? "experts" : "agent",
-      status: g ? "draft" : "draft",
+      status: "draft",
       workspace: workspace || "",
       model: model || "",
       providerId: providerId || "",
+      remark: "",
       plan: [],
       steps: [],
       messages: [],
@@ -253,6 +263,46 @@ class QuestStore {
     return row;
   }
 
+  /** 给渲染进程用：不含 before/after 正文（对齐 Chat 的 publicFileChanges） */
+  publicFileChanges(q) {
+    return (q?.fileChanges || []).map((f) => ({
+      path: f.path,
+      relative: f.relative || f.path,
+      kind: f.kind || "edit",
+      rejected: !!f.rejected,
+    }));
+  }
+
+  /** 按需取单文件 before/after（带长度上限） */
+  getFileChangeBodies(id, filePath, maxChars = 120_000) {
+    const q = this.quests.get(id);
+    if (!q || !filePath) return null;
+    const row = (q.fileChanges || []).find((f) => f.path === filePath);
+    if (!row) return null;
+    const cap = Math.max(4_000, Number(maxChars) || 120_000);
+    const half = Math.floor(cap / 2);
+    const clip = (s) => {
+      if (s == null) return { text: s, truncated: false };
+      const t = String(s);
+      if (t.length <= half) return { text: t, truncated: false };
+      return {
+        text: t.slice(0, half) + `\n…(截断，原长 ${t.length})`,
+        truncated: true,
+      };
+    };
+    const b = clip(row.before);
+    const a = clip(row.after);
+    return {
+      path: row.path,
+      relative: row.relative || row.path,
+      kind: row.kind || "edit",
+      rejected: !!row.rejected,
+      before: b.text,
+      after: a.text,
+      truncated: !!(b.truncated || a.truncated),
+    };
+  }
+
   remove(id) {
     this.quests.delete(id);
     if (this.activeId === id) this.activeId = null;
@@ -268,6 +318,7 @@ function summary(q) {
     goal: q.goal,
     mode: q.mode,
     status: q.status,
+    remark: q.remark || "",
     workspace: q.workspace,
     model: q.model,
     progress: q.progress || 0,

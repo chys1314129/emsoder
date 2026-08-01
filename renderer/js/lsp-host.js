@@ -28,6 +28,11 @@
       return "javascript";
     }
     if (ext === "json") return "json";
+    if (ext === "css") return "css";
+    if (ext === "scss") return "scss";
+    if (ext === "html" || ext === "htm" || ext === "vue" || ext === "svelte") {
+      return "html";
+    }
     return null;
   }
 
@@ -226,8 +231,14 @@ declare function clearImmediate(id: any): void;
       state.markerSub.dispose?.();
       state.markerSub = null;
     }
+    let timer = null;
     state.markerSub = monaco.editor.onDidChangeMarkers(() => {
-      collectProblems();
+      // 输入过程中诊断频繁变化：200ms 防抖合并
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        collectProblems();
+      }, 200);
     });
   }
 
@@ -243,6 +254,23 @@ declare function clearImmediate(id: any): void;
       console.warn("tsconfig load failed", err);
       return null;
     }
+  }
+
+  /** 并发受限的 map（用于索引时批量读文件，避免 300 次串行 IPC） */
+  async function mapLimit(items, limit, fn) {
+    const results = new Array(items.length);
+    let next = 0;
+    const workers = Array.from(
+      { length: Math.min(limit, items.length) },
+      async () => {
+        while (next < items.length) {
+          const i = next++;
+          results[i] = await fn(items[i], i);
+        }
+      }
+    );
+    await Promise.all(workers);
+    return results;
   }
 
   async function indexWorkspace(root) {
@@ -265,14 +293,15 @@ declare function clearImmediate(id: any): void;
               : 2;
         return score(a) - score(b);
       });
-      for (const f of sorted) {
+      // 并行读文件（并发 8），串行建模型
+      await mapLimit(sorted, 8, async (f) => {
         const lang = languageOf(f.path);
-        if (!lang || lang === "json") continue;
+        if (!lang || lang === "json") return;
         try {
           // skip if already open with model
           if (state.models.has(normalizePath(f.path))) {
             n++;
-            continue;
+            return;
           }
           const file = await emsoder.readFile(f.path);
           ensureModel(f.path, file.content, lang);
@@ -280,7 +309,7 @@ declare function clearImmediate(id: any): void;
         } catch {
           /* unreadable */
         }
-      }
+      });
       collectProblems();
       return {
         count: n,
@@ -290,6 +319,24 @@ declare function clearImmediate(id: any): void;
     } finally {
       state.indexing = false;
     }
+  }
+
+  /**
+   * 切换工作区时释放索引模型（保留用户打开的 tab 模型），
+   * 避免 Monaco 模型无限增长。
+   */
+  function disposeIndexedModels(keepPaths) {
+    const keep = new Set((keepPaths || []).map(normalizePath));
+    for (const [p, model] of state.models) {
+      if (keep.has(p)) continue;
+      try {
+        model.dispose();
+      } catch {
+        /* ignore */
+      }
+      state.models.delete(p);
+    }
+    state.indexedRoot = "";
   }
 
   function rememberOpenFile(filePath, content) {
@@ -309,49 +356,13 @@ declare function clearImmediate(id: any): void;
     if (!editor) return false;
     const model = editor.getModel();
     if (!model) return false;
-    const pos = editor.getPosition();
-    // Use Monaco built-in provider via action
+    // Monaco 内置 provider（TS/JS/JSON/CSS/HTML）直接走 action
     try {
       await editor.getAction("editor.action.revealDefinition")?.run();
       return true;
     } catch {
-      /* fall through */
+      return false;
     }
-    // Manual provider query
-    try {
-      const providers =
-        monaco.languages.registerDefinitionProvider &&
-        monaco.languages;
-      const result = await monaco.languages
-        .getLanguages()
-        .map((l) => l.id);
-      void result;
-      const defs = await monaco.languages.typescript
-        .getTypeScriptWorker?.()
-        .then?.(async (getWorker) => {
-          const worker = await getWorker(model.uri);
-          return worker.getDefinitionAtPosition(
-            model.uri.toString(),
-            model.getOffsetAt(pos)
-          );
-        });
-      if (defs?.length) {
-        const d = defs[0];
-        const uri = monaco.Uri.parse(d.fileName);
-        const targetModel = monaco.editor.getModel(uri);
-        if (targetModel) {
-          const start = targetModel.getPositionAt(d.textSpan.start);
-          // ask app to open file
-          if (window.EmsoderLsp?.onNavigate) {
-            window.EmsoderLsp.onNavigate(uri.fsPath || uri.path, start.lineNumber);
-          }
-          return true;
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-    return false;
   }
 
   function installEditorActions(editor) {
@@ -402,6 +413,7 @@ declare function clearImmediate(id: any): void;
   window.EmsoderLsp = {
     init,
     indexWorkspace,
+    disposeIndexedModels,
     applyWorkspaceTsconfig,
     rememberOpenFile,
     updateOpenFile,
