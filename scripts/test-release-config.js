@@ -210,6 +210,15 @@ test("回归门禁在无 Electron 二进制时可用", () => {
   assert(read(path.join(root, "scripts/release/ci-electron-shim.js")).includes("isTestEntry"));
   assert.doesNotMatch(commands(build), /ELECTRON_MIRROR|electron-builder|npm run dist\b/);
 });
+test("Rust 缓存不会保存失败运行的残缺 target", () => {
+  const cache = action(build, "swatinem/rust-cache").with;
+  assert.equal(cache["cache-on-failure"], false);
+  assert(cache["prefix-key"], "缺少缓存前缀键，无法让旧缓存失效");
+  assert.equal(cache.workspaces, "src-tauri -> target");
+  const buildStep = steps(build).find((step) => step.name === "Build Windows x64 NSIS installer");
+  assert.match(buildStep.run, /src-tauri\/target entries/, "缺少构建前目录诊断");
+  assert(buildStep.run.indexOf("src-tauri/target entries") < buildStep.run.indexOf("tauri:build"));
+});
 test("生成运行时时移除第三方 env 模板并拒绝真实 env", () => {
   assert(prepareSource.includes("example|sample|template"), "缺少 env 模板清理规则");
   assert(prepareSource.includes("Refusing to ship an env file"));

@@ -117,7 +117,12 @@ jobs:
         uses: swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
           workspaces: src-tauri -> target
-          cache-on-failure: true
+          # Never save a cache from a run that failed before it could build: a
+          # partial src-tauri/target restored by the next run makes Cargo abort
+          # with "failed to determine list of files in ... src-tauri" before it
+          # compiles anything. Bump the prefix key to invalidate old caches.
+          cache-on-failure: false
+          prefix-key: v2
 
       - name: Setup build Python (not shipped wholesale)
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -187,6 +192,16 @@ jobs:
 
       - name: Build Windows x64 NSIS installer
         run: |
+          $ErrorActionPreference = "Stop"
+          # Diagnostics: Cargo's fingerprint walk aborts if src-tauri contains a
+          # path it cannot enumerate, so record what is actually there first.
+          if (Test-Path src-tauri/target) {
+            $items = Get-ChildItem -Recurse -Force -ErrorAction SilentlyContinue src-tauri/target
+            Write-Host "src-tauri/target entries: $($items.Count)"
+          } else {
+            Write-Host "src-tauri/target absent before build"
+          }
+          Write-Host "src-tauri entries: $((Get-ChildItem -Force src-tauri).Count)"
           npm run tauri:build -- --ci --target x86_64-pc-windows-msvc -- --locked
           if ($LASTEXITCODE -ne 0) { throw "Tauri compilation/bundling failed" }
 
