@@ -193,8 +193,11 @@ jobs:
       - name: Build Windows x64 NSIS installer
         run: |
           $ErrorActionPreference = "Stop"
-          # Diagnostics: Cargo's fingerprint walk aborts if src-tauri contains a
-          # path it cannot enumerate, so record what is actually there first.
+          # Diagnostics for the fingerprint walk, without printing credentials.
+          foreach ($key in @("core.excludesFile", "core.autocrlf", "index.sparse", "core.fsmonitor", "core.ignorecase")) {
+            $value = git config --get $key
+            Write-Host "git $key = $value"
+          }
           if (Test-Path src-tauri/target) {
             $items = Get-ChildItem -Recurse -Force -ErrorAction SilentlyContinue src-tauri/target
             Write-Host "src-tauri/target entries: $($items.Count)"
@@ -202,8 +205,28 @@ jobs:
             Write-Host "src-tauri/target absent before build"
           }
           Write-Host "src-tauri entries: $((Get-ChildItem -Force src-tauri).Count)"
-          npm run tauri:build -- --ci --target x86_64-pc-windows-msvc -- --locked
-          if ($LASTEXITCODE -ne 0) { throw "Tauri compilation/bundling failed" }
+
+          # Cargo's build-script fingerprint walks the package directory and, when
+          # it runs inside a git worktree, resolves an exclude stack from git
+          # state. On this runner that walk aborted with
+          # "Failed to update the excludes stack to see if a path is excluded"
+          # before compiling anything. Building with the worktree hidden removes
+          # the excludes stack entirely; .git is restored immediately afterwards.
+          $gitDir = Join-Path $PWD ".git"
+          $parked = Join-Path $env:RUNNER_TEMP "emsoder-parked-git"
+          $hidden = $false
+          if (Test-Path $gitDir) {
+            if (Test-Path $parked) { Remove-Item -Recurse -Force $parked }
+            Move-Item -LiteralPath $gitDir -Destination $parked
+            $hidden = $true
+            Write-Host "Parked .git for the build (no git exclude stack during fingerprinting)"
+          }
+          try {
+            npm run tauri:build -- --ci --target x86_64-pc-windows-msvc -- --locked
+            if ($LASTEXITCODE -ne 0) { throw "Tauri compilation/bundling failed" }
+          } finally {
+            if ($hidden) { Move-Item -LiteralPath $parked -Destination $gitDir }
+          }
 
       - name: Test actual release executable with local mock model
         env:

@@ -210,6 +210,19 @@ test("回归门禁在无 Electron 二进制时可用", () => {
   assert(read(path.join(root, "scripts/release/ci-electron-shim.js")).includes("isTestEntry"));
   assert.doesNotMatch(commands(build), /ELECTRON_MIRROR|electron-builder|npm run dist\b/);
 });
+test("构建时隐藏 git 工作树以规避排除栈问题", () => {
+  const buildStep = steps(build).find((step) => step.name === "Build Windows x64 NSIS installer");
+  const run = buildStep.run;
+  assert.match(run, /Move-Item -LiteralPath \$gitDir -Destination \$parked/);
+  assert.match(run, /finally\s*\{[\s\S]*Move-Item -LiteralPath \$parked -Destination \$gitDir/);
+  assert(run.indexOf("Move-Item -LiteralPath $gitDir") < run.indexOf("tauri:build"));
+  // 诊断不得输出任何凭据：只允许按名单查询具体的 git 配置项
+  assert.match(run, /git config --get \$key/);
+  assert.doesNotMatch(run, /git config --list|--show-origin|extraheader|http\.|Authorization/i);
+  for (const key of ["core.excludesFile", "core.autocrlf", "index.sparse", "core.fsmonitor"]) {
+    assert(run.includes(key), `缺少诊断项 ${key}`);
+  }
+});
 test("Rust 缓存不会保存失败运行的残缺 target", () => {
   const cache = action(build, "swatinem/rust-cache").with;
   assert.equal(cache["cache-on-failure"], false);
