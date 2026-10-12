@@ -167,6 +167,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "WebView assets failed" }
 
       - name: Run release regression gates
+        env:
+          # Headless tests load src/**, which requires electron. The Tauri build
+          # never downloads the Electron binary, so route require("electron") to
+          # the production platform shim. Absolute path: NODE_OPTIONS is inherited
+          # by child processes whose working directory differs.
+          NODE_OPTIONS: --require=${{ github.workspace }}/scripts/release/ci-electron-shim.js
         run: |
           $ErrorActionPreference = "Stop"
           $tests = @("test:release-config", "test:providers", "test:pollinations", "test:keyless-integration", "test:keyless-ui", "test:config-secret-projection", "test:credential-catalog", "test:bridge-parity", "test:host-boot", "test:pi-sidecar", "test:pi-nested-adapter", "test:pi-token-stats", "test:context-history")

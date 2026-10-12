@@ -199,6 +199,17 @@ test("作业级 env 只使用该处允许的上下文", () => {
   assert(runnerTemp.includes("EMSODER_DOWNLOAD_DIR=$env:RUNNER_TEMP/emsoder-downloads"));
   assert(runnerTemp.includes("EMSODER_WHEEL_DIR=$env:RUNNER_TEMP/emsoder-wheels"));
 });
+test("回归门禁在无 Electron 二进制时可用", () => {
+  const gate = steps(build).find((step) => step.name === "Run release regression gates");
+  assert(gate, "缺少回归门禁步骤");
+  assert.equal(gate.env.NODE_OPTIONS, "--require=${{ github.workspace }}/scripts/release/ci-electron-shim.js");
+  // 必须是绝对路径：NODE_OPTIONS 会被子进程继承，而子进程的工作目录可能不同
+  assert.doesNotMatch(gate.env.NODE_OPTIONS, /--require=\./);
+  assert.match(gate.env.NODE_OPTIONS, /\$\{\{\s*github\.workspace\s*\}\}\//);
+  assert(read(path.join(root, "scripts/release/ci-electron-shim.js")).includes("host/electron-shim.js"));
+  assert(read(path.join(root, "scripts/release/ci-electron-shim.js")).includes("isTestEntry"));
+  assert.doesNotMatch(commands(build), /ELECTRON_MIRROR|electron-builder|npm run dist\b/);
+});
 test("核心技能归档校验后解压，PR构建不发布", () => {
   assert.match(versions.coreArchive.sha256, /^[a-f0-9]{64}$/);
   const run = commands(build);
