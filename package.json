@@ -1,7 +1,7 @@
 {
   "name": "emsoder-desktop",
   "productName": "EMSoder",
-  "version": "2.6.0",
+  "version": "2.8.0",
   "description": "EMSoder desktop — open a folder, talk, review file changes. Bring your own model.",
   "main": "src/main/main.js",
   "author": "EMSoder",
