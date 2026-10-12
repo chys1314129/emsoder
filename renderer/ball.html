@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+<head>
+  <meta charset="UTF-8" />
+  <!-- CSP 由 src-tauri/tauri.conf.json 注入；原先的 default-src 'none'
+       会把 Tauri 的 IPC（ipc: / http://ipc.localhost）也挡掉。 -->
+  <title>EMSoder</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: transparent;
+      -webkit-app-region: drag;
+      cursor: default;
+      font: 500 12px/1.2 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    }
+    #pill {
+      position: absolute; inset: 6px;
+      border-radius: 22px;
+      display: flex; align-items: center; gap: 8px;
+      padding: 0 12px 0 10px;
+      color: #fff;
+      background: linear-gradient(135deg, #7dd3fc, #0ea5e9 75%);
+      box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4), inset 0 1px 3px rgba(255,255,255,0.4);
+      transition: background 0.25s ease, box-shadow 0.25s ease;
+    }
+    #dot {
+      flex: none; width: 14px; height: 14px; border-radius: 50%;
+      background: #fff; opacity: 0.9;
+      box-shadow: 0 0 0 2px rgba(255,255,255,0.25);
+    }
+    #label {
+      flex: 1; min-width: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.35);
+    }
+    /* idle */
+    body[data-state="idle"] #pill {
+      background: linear-gradient(135deg, #cbd5e1, #64748b 75%);
+    }
+    /* running: blue + pulsing dot */
+    body[data-state="running"] #pill {
+      background: linear-gradient(135deg, #7dd3fc, #0ea5e9 75%);
+    }
+    body[data-state="running"] #dot { animation: pulse 1s ease-in-out infinite; }
+    /* review: amber */
+    body[data-state="review"] #pill {
+      background: linear-gradient(135deg, #fde68a, #f59e0b 75%);
+    }
+    /* stopped/error: red */
+    body[data-state="stopped"] #pill {
+      background: linear-gradient(135deg, #fca5a5, #ef4444 75%);
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.55; transform: scale(0.85); }
+      50% { opacity: 1; transform: scale(1.15); }
+    }
+    #actions {
+      position: absolute; top: -2px; right: -2px;
+      display: none; gap: 3px;
+      -webkit-app-region: no-drag;
+    }
+    body:hover #actions { display: flex; }
+    .act {
+      width: 18px; height: 18px; border-radius: 50%;
+      border: none; cursor: pointer;
+      background: rgba(15,23,42,0.85); color: #fff;
+      font: 700 11px/1 system-ui; display: flex; align-items: center; justify-content: center;
+    }
+    .act:hover { background: rgba(15,23,42,1); }
+  </style>
+</head>
+<body data-state="idle" data-tauri-drag-region="deep">
+  <div id="pill" title="EMSoder 任务状态">
+    <span id="dot"></span>
+    <span id="label">空闲</span>
+  </div>
+  <div id="actions">
+    <button class="act" id="btnShow" title="显示主窗口">▢</button>
+    <button class="act" id="btnStop" title="停止任务">■</button>
+  </div>
+  <script src="js/tauri-bridge.js"></script>
+  <script src="ball.js"></script>
+</body>
+</html>

@@ -1,60 +1,48 @@
 /**
- * Windowed virtual list for Chat #messages.
- * Live streaming nodes go into .vlist-live (always mounted at bottom).
+ * Chat message list (#messages)
+ *
+ * 不用虚拟列表 spacer（估高误差会导致滚轮「跳很远」）。
+ * 改为：原生 overflow 滚动 + 按 message id 复用节点 + 底部 live 区挂流式内容。
+ *
+ * 滚轮 / 触控板：完全交给浏览器；我们只在「贴底」时自动跟随新内容。
  */
 (() => {
-  const EST = { user: 88, assistant: 120, tool: 48, reasoning: 48, error: 72, default: 80 };
-  const OVERSCAN = 6;
-
-  function roleOf(m) {
-    if (!m) return "default";
-    if (m.role === "tool" || m.role === "reasoning" || m.role === "error") return m.role;
-    if (m.role === "user" || m.role === "assistant") return m.role;
-    return "default";
-  }
+  /** 距底部多少像素内视为贴底（继续跟随新消息） */
+  const STICK_PX = 96;
+  /** 滚轮向上超过该距离则解除贴底 */
+  const UNSTICK_PX = 48;
 
   function isToolCallPlaceholderText(text) {
     const t = String(text || "").trim();
     return /^调用工具\s*[:：]/.test(t);
   }
 
-  function estimateHeight(m) {
-    const role = roleOf(m);
-    // 工具调用与「调用工具: …」占位在 UI 中隐藏，占位高度为 0
-    if (role === "tool") return 0;
-    if (role === "assistant" && isToolCallPlaceholderText(m?.content)) return 0;
-    const base = EST[role] || EST.default;
-    const len = String(m.content || "").length;
-    if (role === "assistant" || role === "user") {
-      return Math.min(480, base + Math.floor(len / 120) * 18);
-    }
-    return base;
+  function shouldSkipItem(m) {
+    if (!m) return true;
+    if (m.role === "tool") return true;
+    if (m.role === "assistant" && isToolCallPlaceholderText(m.content)) return true;
+    return false;
   }
 
   /**
    * @param {HTMLElement} container #messages
-   * @param {{ renderItem: Function }} opts
+   * @param {{ renderItem: (item: any, index: number) => HTMLElement|null }} opts
    */
   function createChatVirtualList(container, opts = {}) {
     const renderItem = opts.renderItem;
+    /** @type {any[]} */
     let items = [];
-    let heights = [];
-    let total = 0;
-    let start = 0;
-    let end = 0;
-    let raf = 0;
-    let stickBottom = true;
-    let prefix = [0];
+    /** @type {Map<string, HTMLElement>} */
     let nodeCache = new Map();
+    let stickBottom = true;
+    let bound = false;
+    /** 程序改 scrollTop 时忽略 scroll 事件，避免误判贴底状态 */
+    let ignoreScroll = 0;
+    let followRaf = 0;
+    let wheelLockUntil = 0;
 
-    const top = document.createElement("div");
-    top.className = "vlist-spacer vlist-top";
-    top.setAttribute("aria-hidden", "true");
-    const windowEl = document.createElement("div");
-    windowEl.className = "vlist-window";
-    const bottom = document.createElement("div");
-    bottom.className = "vlist-spacer vlist-bottom";
-    bottom.setAttribute("aria-hidden", "true");
+    const history = document.createElement("div");
+    history.className = "vlist-history";
     const live = document.createElement("div");
     live.className = "vlist-live";
 
@@ -62,174 +50,254 @@
       if (container.dataset.vlist === "1") return;
       container.dataset.vlist = "1";
       container.innerHTML = "";
-      container.appendChild(top);
-      container.appendChild(windowEl);
-      container.appendChild(bottom);
+      container.appendChild(history);
       container.appendChild(live);
-      container.addEventListener("scroll", onScroll, { passive: true });
+      bindOnce();
     }
 
-    // 高度前缀和：findStart / topH / botH 从 O(n) 降到 O(log n)/O(1)
-    function rebuildPrefix() {
-      prefix = new Array(heights.length + 1);
-      prefix[0] = 0;
-      for (let i = 0; i < heights.length; i++) prefix[i + 1] = prefix[i] + heights[i];
-    }
-
-    function recomputeTotal() {
-      total = prefix[heights.length] ?? 0;
-    }
-
-    function measureMounted() {
-      const kids = windowEl.children;
-      for (let i = 0; i < kids.length; i++) {
-        const el = kids[i];
-        const idx = Number(el.dataset.vidx);
-        if (!Number.isFinite(idx) || idx < 0 || idx >= heights.length) continue;
-        const h = el.getBoundingClientRect().height;
-        if (h > 8 && Math.abs(h - heights[idx]) > 2) {
-          heights[idx] = h;
-        }
-      }
-      rebuildPrefix();
-    }
-
-    function findStart(scrollTop) {
-      // 二分：最大的 i 使 prefix[i] <= scrollTop
-      let lo = 0;
-      let hi = heights.length;
-      while (lo < hi) {
-        const mid = (lo + hi + 1) >> 1;
-        if (prefix[mid] <= scrollTop) lo = mid;
-        else hi = mid - 1;
-      }
-      return Math.min(lo, Math.max(0, heights.length - 1));
-    }
-
-    // 按 message id 缓存渲染节点：窗口滚动时复用，避免重跑 markdown
-    function cachedRender(item, i) {
-      const key = item?.id || `i${i}`;
-      let node = nodeCache.get(key);
-      if (!node) {
-        node = renderItem(item, i);
-        nodeCache.set(key, node);
-      }
-      return node;
-    }
-
-    function layout() {
-      if (!items.length) {
-        top.style.height = "0px";
-        bottom.style.height = "0px";
-        windowEl.innerHTML = "";
-        start = 0;
-        end = 0;
+    function bindOnce() {
+      if (bound || container.__vlistBound) {
+        bound = true;
         return;
       }
-      const viewH = container.clientHeight || 400;
-      const scrollTop = container.scrollTop;
-      let s = findStart(scrollTop);
-      s = Math.max(0, s - OVERSCAN);
-      let e = s;
-      let used = 0;
-      while (e < items.length && used < viewH + OVERSCAN * 60) {
-        used += heights[e];
-        e++;
-      }
-      e = Math.min(items.length, e + OVERSCAN);
+      bound = true;
+      container.__vlistBound = true;
 
-      const topH = prefix[s] || 0;
-      const botH = total - (prefix[e] ?? 0);
+      // 原生滚动：只更新贴底状态，绝不在 scroll 回调里改 scrollTop
+      container.addEventListener(
+        "scroll",
+        () => {
+          if (ignoreScroll > 0) return;
+          // 用户刚用滚轮时，以用户意图为准
+          const dist = distanceFromBottom();
+          if (dist <= STICK_PX) stickBottom = true;
+          else if (dist > UNSTICK_PX) stickBottom = false;
+        },
+        { passive: true }
+      );
 
-      const needRebuild = s !== start || e !== end || windowEl.childElementCount !== e - s;
-      start = s;
-      end = e;
-      top.style.height = topH + "px";
-      bottom.style.height = botH + "px";
-
-      if (needRebuild) {
-        windowEl.innerHTML = "";
-        const frag = document.createDocumentFragment();
-        for (let i = s; i < e; i++) {
-          const node = cachedRender(items[i], i);
-          if (!node) continue;
-          const el = node.nodeType === 1 ? node : node;
-          const wrap = el.closest?.(".msg") || el;
-          if (wrap && wrap.classList && wrap.classList.contains("msg")) {
-            wrap.dataset.vidx = String(i);
-            frag.appendChild(wrap);
-          } else if (el) {
-            el.dataset.vidx = String(i);
-            frag.appendChild(el);
+      // 滚轮：只负责「用户意图」，不改写 delta，不 preventDefault
+      container.addEventListener(
+        "wheel",
+        (e) => {
+          // 向上滚 → 立刻解除贴底，后续流式不再拽回底部
+          if (e.deltaY < 0) {
+            stickBottom = false;
+            wheelLockUntil = Date.now() + 400;
+          } else if (e.deltaY > 0) {
+            // 向下滚到接近底部 → 恢复贴底
+            // 用 rAF 等浏览器先应用本次滚动再量距离
+            requestAnimationFrame(() => {
+              if (distanceFromBottom() <= STICK_PX) stickBottom = true;
+            });
           }
-        }
-        windowEl.appendChild(frag);
+        },
+        { passive: true }
+      );
+
+      // 触控板/触摸：touchmove 向上也解除贴底
+      let touchY0 = 0;
+      container.addEventListener(
+        "touchstart",
+        (e) => {
+          touchY0 = e.touches?.[0]?.clientY || 0;
+        },
+        { passive: true }
+      );
+      container.addEventListener(
+        "touchmove",
+        (e) => {
+          const y = e.touches?.[0]?.clientY || 0;
+          if (y - touchY0 > 6) {
+            // 手指下拖 = 内容上翻
+            stickBottom = false;
+            wheelLockUntil = Date.now() + 400;
+          }
+          touchY0 = y;
+        },
+        { passive: true }
+      );
+    }
+
+    function distanceFromBottom() {
+      return (
+        container.scrollHeight - container.scrollTop - container.clientHeight
+      );
+    }
+
+    function withScrollQuiet(fn) {
+      ignoreScroll += 1;
+      try {
+        fn();
+      } finally {
+        // 等浏览器处理完 scroll 事件再恢复
         requestAnimationFrame(() => {
-          measureMounted();
-          top.style.height = (prefix[start] || 0) + "px";
-          bottom.style.height = (total - (prefix[end] ?? 0)) + "px";
+          ignoreScroll = Math.max(0, ignoreScroll - 1);
         });
       }
     }
 
-    function onScroll() {
-      const dist =
-        container.scrollHeight - container.scrollTop - container.clientHeight;
-      stickBottom = dist < 80;
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        layout();
+    function pinToBottom() {
+      withScrollQuiet(() => {
+        container.scrollTop = container.scrollHeight;
       });
+    }
+
+    function scheduleFollow() {
+      if (!stickBottom) return;
+      if (Date.now() < wheelLockUntil) return;
+      if (followRaf) return;
+      followRaf = requestAnimationFrame(() => {
+        followRaf = 0;
+        if (!stickBottom) return;
+        if (Date.now() < wheelLockUntil) return;
+        pinToBottom();
+      });
+    }
+
+    function itemKey(m, i) {
+      return m?.id ? String(m.id) : `i${i}`;
+    }
+
+    function buildNode(m, i) {
+      if (shouldSkipItem(m)) return null;
+      const key = itemKey(m, i);
+      let node = nodeCache.get(key);
+      if (node && node.isConnected === false) {
+        // 仍可复用 detached 节点
+      }
+      if (!node) {
+        const rendered = renderItem(m, i);
+        if (!rendered) return null;
+        node = rendered.nodeType === 1 ? rendered : null;
+        if (!node) return null;
+        const wrap = node.classList?.contains("msg")
+          ? node
+          : node.closest?.(".msg") || node;
+        wrap.dataset.vkey = key;
+        wrap.dataset.vidx = String(i);
+        nodeCache.set(key, wrap);
+        node = wrap;
+      } else {
+        node.dataset.vidx = String(i);
+      }
+      return node;
+    }
+
+    /**
+     * 增量同步 history：尽量复用已有节点顺序，避免整表 innerHTML 清空导致滚动跳动。
+     */
+    function syncHistory() {
+      ensureSkeleton();
+      const nextKeys = [];
+      const nextNodes = [];
+      for (let i = 0; i < items.length; i++) {
+        const node = buildNode(items[i], i);
+        if (!node) continue;
+        nextKeys.push(node.dataset.vkey || itemKey(items[i], i));
+        nextNodes.push(node);
+      }
+
+      // 丢掉已不存在的缓存
+      const keep = new Set(nextKeys);
+      for (const [k, el] of nodeCache) {
+        if (!keep.has(k)) {
+          el.remove();
+          nodeCache.delete(k);
+        }
+      }
+
+      // 按顺序挂到 history：已在正确位置则不动
+      let cursor = history.firstChild;
+      for (const node of nextNodes) {
+        if (cursor === node) {
+          cursor = cursor.nextSibling;
+          continue;
+        }
+        if (cursor) {
+          history.insertBefore(node, cursor);
+        } else {
+          history.appendChild(node);
+        }
+      }
+      // 去掉尾部多余（理论上已被 remove）
+      while (history.childElementCount > nextNodes.length) {
+        history.lastElementChild?.remove();
+      }
     }
 
     function setItems(list) {
       ensureSkeleton();
       live.innerHTML = "";
       items = Array.isArray(list) ? list : [];
-      heights = items.map((m) => estimateHeight(m));
+      // 全量换会话时清缓存，避免串会话节点
       nodeCache = new Map();
-      rebuildPrefix();
-      recomputeTotal();
+      history.replaceChildren();
       if (!items.length) {
         container.dataset.vlist = "";
         container.innerHTML = "";
+        // skeleton 被清掉后下次 ensure 会重建
         return { empty: true };
       }
+      syncHistory();
       stickBottom = true;
-      layout();
-      scrollToEnd();
+      // 首帧布局后再贴底，避免图片/字体导致二次跳动
+      pinToBottom();
+      requestAnimationFrame(() => {
+        if (stickBottom) pinToBottom();
+      });
       return { empty: false, count: items.length };
     }
 
     function scrollToEnd() {
-      requestAnimationFrame(() => {
-        container.scrollTop = container.scrollHeight;
-        stickBottom = true;
-      });
+      stickBottom = true;
+      wheelLockUntil = 0;
+      pinToBottom();
+      requestAnimationFrame(() => pinToBottom());
     }
 
-    /** Scroll so item at index is near the top of the viewport. */
     function scrollToIndex(index) {
       if (!items.length) return false;
       const idx = Math.max(0, Math.min(items.length - 1, Number(index) || 0));
       ensureSkeleton();
-      let topH = prefix[idx] || 0;
+      // 若 history 还没同步完，先同步
+      if (!history.childElementCount) syncHistory();
       stickBottom = false;
-      container.scrollTop = Math.max(0, topH - 8);
-      layout();
-      // second pass after paint so measured heights refine position
-      requestAnimationFrame(() => {
-        measureMounted();
-        const refined = prefix[idx] || 0;
-        container.scrollTop = Math.max(0, refined - 8);
-        layout();
-        const el = windowEl.querySelector(`[data-vidx="${idx}"]`);
-        if (el) {
-          el.classList.add("toc-flash");
-          setTimeout(() => el.classList.remove("toc-flash"), 1200);
+      wheelLockUntil = Date.now() + 300;
+
+      let el = history.querySelector(`[data-vidx="${idx}"]`);
+      if (!el) {
+        const m = items[idx];
+        if (m?.id) {
+          const key = String(m.id);
+          el =
+            nodeCache.get(key) ||
+            [...history.children].find((n) => n.dataset?.vkey === key) ||
+            null;
         }
+      }
+
+      if (!el) {
+        // 尝试渲染该条
+        const node = buildNode(items[idx], idx);
+        if (node) {
+          history.appendChild(node);
+          el = node;
+        }
+      }
+      if (!el) return false;
+
+      withScrollQuiet(() => {
+        const top =
+          el.offsetTop - history.offsetTop - 8 + (history.offsetTop || 0);
+        // offsetTop 相对 offsetParent；更稳：用 getBoundingClientRect 差值
+        const cRect = container.getBoundingClientRect();
+        const eRect = el.getBoundingClientRect();
+        const next = container.scrollTop + (eRect.top - cRect.top) - 8;
+        container.scrollTop = Math.max(0, next);
       });
+      el.classList.add("toc-flash");
+      setTimeout(() => el.classList.remove("toc-flash"), 1200);
       return true;
     }
 
@@ -240,12 +308,13 @@
 
     function clear() {
       items = [];
-      heights = [];
-      total = 0;
+      nodeCache = new Map();
+      if (followRaf) {
+        cancelAnimationFrame(followRaf);
+        followRaf = 0;
+      }
+      history.replaceChildren();
       live.innerHTML = "";
-      windowEl.innerHTML = "";
-      top.style.height = "0px";
-      bottom.style.height = "0px";
       container.dataset.vlist = "";
       container.innerHTML = "";
     }
@@ -254,8 +323,18 @@
       return container.dataset.vlist === "1";
     }
 
+    function isStickBottom() {
+      return stickBottom;
+    }
+
+    /** 流式追加 / 新气泡：仅贴底时跟随 */
     function onLiveAppend() {
-      if (stickBottom) scrollToEnd();
+      scheduleFollow();
+    }
+
+    function layout() {
+      // 兼容旧调用：无 spacer，仅在贴底时跟随
+      scheduleFollow();
     }
 
     return {
@@ -265,9 +344,15 @@
       getLiveRoot,
       clear,
       isActive,
+      isStickBottom,
       onLiveAppend,
       layout,
     };
+  }
+
+  // 兼容旧 EST 导出（外部若引用）
+  function estimateHeight() {
+    return 80;
   }
 
   window.EmsoderChatVirtual = { createChatVirtualList, estimateHeight };

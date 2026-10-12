@@ -2,27 +2,38 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta
-    http-equiv="Content-Security-Policy"
-    content="default-src 'self' file: blob: data:; style-src 'self' 'unsafe-inline' file: blob:; script-src 'self' 'unsafe-eval' 'unsafe-inline' file: blob:; worker-src 'self' blob: file:; img-src 'self' data: blob:;"
-  />
+  <!--
+    CSP 现在由 src-tauri/tauri.conf.json 的 app.security.csp 统一注入。
+    原先这里的 meta CSP 必须移除：它没有放行 ipc: / http://ipc.localhost，
+    而 Tauri 的 IPC 正走这个源。多个 CSP 策略是取交集，留着会把整个桥打死。
+  -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>EMSoder</title>
+  <script>
+    // 尽早设主题，避免编辑器/界面闪暗色
+    (function () {
+      try {
+        var t = localStorage.getItem("emsoder-theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.setAttribute("data-theme", t);
+        }
+      } catch (e) {}
+    })();
+  </script>
   <link rel="stylesheet" href="css/theme.css" />
   <link rel="stylesheet" href="css/panels.css" />
-  <link rel="stylesheet" href="css/quest.css" />
-  <link rel="stylesheet" href="css/quest-workspace.css" />
 </head>
 <body data-theme="dark">
   <div id="app">
-    <header class="titlebar">
+    <!-- Tauri 的拖拽：deep 让整个子树可拖，BUTTON/INPUT 这类可点击元素
+         自动豁免——等价于原先 CSS 里的 -webkit-app-region: drag/no-drag
+         （WebView2 不支持后者）。 -->
+    <header class="titlebar" data-tauri-drag-region="deep">
       <div class="brand">
-        <div class="logo"><div class="e-tiles"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div>
+        <div class="logo" aria-hidden="true">
+          <img class="logo-img" src="assets/logo.png" alt="" width="30" height="30" draggable="false" />
+        </div>
         <span class="brand-name">EM<span class="dot-blue">S</span><span class="dot-red">o</span><span class="dot-yel">d</span><span class="dot-grn">e</span>r</span>
-      </div>
-      <div class="mode-switch" title="切换 Quest / IDE">
-        <button type="button" data-mode="quest">Quest</button>
-        <button type="button" data-mode="ide" class="active">IDE</button>
       </div>
       <div class="workspace-path" id="workspacePath">未打开工作区</div>
       <div class="spacer"></div>
@@ -30,7 +41,6 @@
         <button class="tb-btn" id="btnOpenFolder">打开文件夹</button>
         <button class="tb-btn" id="btnProviders">服务商</button>
         <button class="tb-btn" id="btnSelectModel">模型</button>
-        <button class="tb-btn" id="btnOpenQuest" title="Ctrl+Shift+Q">任务板</button>
         <button class="tb-btn" id="btnToggleBottom">面板</button>
         <button class="tb-btn" id="btnToggleChat" title="显示/隐藏中间 Chat">Chat</button>
         <button class="tb-btn primary" id="btnToggleEditor" title="显示/隐藏右侧编辑器">显示编辑器</button>
@@ -53,10 +63,6 @@
         <button class="act-btn" data-view="search" title="搜索">
           <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
         </button>
-        <button class="act-btn" data-view="quest" id="actQuest" title="Quest 任务板">
-          <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="18" cy="18" r="3"/></svg>
-          <span class="quest-dot"></span>
-        </button>
         <button class="act-btn" data-view="git" title="Git">
           <svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M6 8v4a4 4 0 0 0 4 4h2"/><path d="M18 8v2a4 4 0 0 1-4 4h-2"/></svg>
         </button>
@@ -69,13 +75,13 @@
         <button class="act-btn" data-view="mcp" title="MCP 工具">
           <svg viewBox="0 0 24 24"><circle cx="5" cy="5" r="2.2"/><circle cx="19" cy="5" r="2.2"/><circle cx="12" cy="19" r="2.2"/><path d="M6.7 6.7l3.6 10.1M17.3 6.7l-3.6 10.1"/></svg>
         </button>
+        <button class="act-btn" data-view="env" title="环境变量与密钥">
+          <svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 5l3 3M14 7l3 3"/></svg>
+        </button>
         <button class="act-btn" data-view="settings" title="设置">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.6.9 1 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
         </button>
         <div class="act-spacer"></div>
-        <button class="act-btn" id="actAccount" title="免费 · 无 Credits · Quest">
-          <svg viewBox="0 0 24 24"><path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5z"/><path d="M3 21a9 9 0 0 1 18 0"/></svg>
-        </button>
       </aside>
 
       <section class="side" id="sidePanel">
@@ -110,7 +116,7 @@
             <div id="monacoEditor" class="monaco-host hidden"></div>
             <div class="editor-empty" id="editorEmpty">
               <h1>EMSoder</h1>
-              <p>Qoder 风格 · Monaco 编辑器 · 终端 · Git · 天蓝色<br/>免费 · 无账号 · 自定义第三方模型</p>
+              <p>打开文件夹，说话，文件会改。你审。<br/>自己的模型 · 无账号</p>
               <div class="hint-keys">
                 <kbd>Ctrl+O</kbd><span>打开文件夹</span>
                 <kbd>Ctrl+`</kbd><span>终端</span>
@@ -132,8 +138,8 @@
           <div class="bottom-bar">
             <button class="bottom-tab active" data-tab="terminal">终端</button>
             <button class="bottom-tab" data-tab="git">Git</button>
-            <button class="bottom-tab" data-tab="debug">调试</button>
-            <button class="bottom-tab" data-tab="problems">问题 <span id="problemsBadge" class="tab-badge hidden">0</span></button>
+            <button class="bottom-tab hidden" data-tab="debug" hidden>调试</button>
+            <button class="bottom-tab hidden" data-tab="problems" hidden>问题 <span id="problemsBadge" class="tab-badge hidden">0</span></button>
             <button class="bottom-tab" data-tab="rules">规则</button>
             <div class="grow"></div>
             <button class="icon-btn" id="btnToggleBottom2" title="折叠">▾</button>
@@ -217,59 +223,6 @@
         </div>
       </section>
 
-      <!-- Quest center console (conversation + execution) -->
-      <aside class="quest-panel" id="questPanel">
-        <div class="quest-panel-header">
-          <div style="min-width:0">
-            <div class="title" id="questTitle">Quest</div>
-            <div class="sub" id="questMeta">定目标 · 审结果 · 免费自定义模型</div>
-          </div>
-          <span class="quest-badge" id="questStatus">—</span>
-          <div class="grow"></div>
-          <button class="icon-btn" id="btnQuestRefresh" title="刷新">↻</button>
-          <button class="icon-btn" id="btnQuestClosePanel" title="切到 IDE">✕</button>
-        </div>
-        <div class="quest-toolbar">
-          <button class="btn primary" id="btnQuestStart">▶ 启动</button>
-          <button class="btn" id="btnQuestStop" disabled>■ 停止</button>
-          <button class="btn" id="btnQuestDone" disabled>✓ 标记完成</button>
-          <span class="grow"></span>
-          <button class="tb-mini" id="btnQuestOpenTerm">终端</button>
-          <button class="tb-mini" id="btnQuestOpenGit">Git</button>
-        </div>
-        <div class="quest-progress"><i id="questProgressBar"></i></div>
-        <div class="quest-empty" id="questEmpty">
-          <h3>Define the goal. Review the result.</h3>
-          <div>
-            在左侧 <b>My Quests</b> 描述目标并「创建并运行」。<br/>
-            中间看执行过程 · 右侧看计划与 Changes。<br/>
-            支持 Agent / Experts · 你的第三方模型 · 无 Credits。
-          </div>
-        </div>
-        <div class="quest-body hidden" id="questBody">
-          <div class="quest-goal-box" id="questGoal"></div>
-          <div class="quest-mid">
-            <div class="quest-steps" id="questSteps"></div>
-            <div class="quest-log" id="questLog"></div>
-          </div>
-          <div class="quest-changes" id="questChanges"></div>
-        </div>
-        <div
-          class="row-resizer"
-          id="resizeQuestComposer"
-          data-resize="quest-composer"
-          title="拖动调整 Quest 底部输入区高度"
-        ></div>
-        <div class="quest-composer" id="questComposer">
-          <textarea id="questFollowInput" placeholder="任务备注（可选）：写入当前任务，显示在看板卡片上"></textarea>
-          <div class="quest-composer-row">
-            <span style="font-size:11px;color:var(--text-muted)">Enter 不发送 · 用左侧「创建并运行」提交新目标</span>
-            <button class="btn" id="btnQuestRemarkSave">保存备注</button>
-            <button class="btn primary" id="btnQuestStart2">启动当前任务</button>
-          </div>
-        </div>
-      </aside>
-
       <div
         class="col-resizer"
         id="resizeRight"
@@ -277,63 +230,73 @@
         title="拖动调整右栏宽度"
       ></div>
 
-      <!-- Quest right rail -->
-      <aside class="quest-right" id="questRight">
-        <div class="quest-right-tabs">
-          <button type="button" data-rtab="plan" class="active">计划</button>
-          <button type="button" data-rtab="changes">Changes</button>
-          <button type="button" data-rtab="tools">工具</button>
-        </div>
-        <div class="quest-right-body">
-          <div class="quest-right-pane active" data-rpane="plan" id="questRightSteps"></div>
-          <div class="quest-right-pane" data-rpane="changes" id="questRightChanges"></div>
-          <div class="quest-right-pane" data-rpane="tools">
-            <div class="quest-right-tools">
-              <div class="quest-section-h">快捷操作</div>
-              <button class="btn" id="btnQuestOpenFolder">打开工作区文件夹</button>
-              <button class="btn" id="btnQuestToIde">切换到 IDE 写代码</button>
-              <button class="btn" id="btnSelectModel2">切换模型</button>
-              <button class="btn" id="btnProviders2">管理服务商</button>
-              <div class="quest-right-hint">
-                <b>操作习惯（对齐 Qoder Quest）</b><br/>
-                1. 左：任务列表 / 新建目标<br/>
-                2. 中：看 Agent 怎么做<br/>
-                3. 右：计划步骤 + 文件变更审阅<br/>
-                4. 顶栏可切回「IDE」编辑文件
-              </div>
-            </div>
-          </div>
-        </div>
-      </aside>
-
       <aside class="chat" id="chatPanel">
         <div class="chat-header">
           <div style="min-width:0">
             <div class="title" id="chatTitle" title="">AI 助手</div>
-            <div class="sub" id="chatSub">Agent · 可读写文件</div>
+            <div class="sub" id="chatSub">可读写文件</div>
           </div>
           <div class="grow"></div>
           <button class="chip" id="modelChip" title="切换模型">model</button>
+          <div class="reason-wrap" id="reasonWrap">
+            <button
+              class="chip"
+              id="reasoningChip"
+              type="button"
+              title="思考强度：关闭 / 低 / 中 / 高 / 超高"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="reasonMenu"
+            >
+              思考 · 中
+            </button>
+            <div class="reason-menu" id="reasonMenu" role="menu" hidden>
+              <button type="button" class="reason-item" role="menuitemradio" data-effort="off">
+                <span class="reason-item-title">关闭思考</span>
+                <span class="reason-item-desc">不发送思考参数</span>
+              </button>
+              <button type="button" class="reason-item" role="menuitemradio" data-effort="low">
+                <span class="reason-item-title">低</span>
+                <span class="reason-item-desc">更快 · 浅思考</span>
+              </button>
+              <button type="button" class="reason-item" role="menuitemradio" data-effort="medium">
+                <span class="reason-item-title">中</span>
+                <span class="reason-item-desc">默认平衡</span>
+              </button>
+              <button type="button" class="reason-item" role="menuitemradio" data-effort="high">
+                <span class="reason-item-title">高</span>
+                <span class="reason-item-desc">更深入</span>
+              </button>
+              <button type="button" class="reason-item" role="menuitemradio" data-effort="ultra">
+                <span class="reason-item-title">超高</span>
+                <span class="reason-item-desc">最长思考</span>
+              </button>
+            </div>
+          </div>
           <button class="btn primary btn-new-chat" id="btnNewChat" type="button" title="新建会话">＋ 新会话</button>
           <button class="icon-btn" id="btnStop" title="停止" disabled>■</button>
           <button class="btn" id="btnShowEditorFromChat" type="button" title="显示右侧编辑器">编辑器</button>
         </div>
         <div class="chat-toolbar">
-          <div class="seg" id="modeSeg">
-            <button data-mode="agent" class="active">Agent</button>
-            <button data-mode="ask">Ask</button>
-          </div>
-          <button class="btn" id="btnClearChat">清空</button>
+          <button class="btn chat-extra" id="btnClearChat">清空</button>
           <button
-            class="btn"
+            class="btn chat-extra"
+            id="btnCompressContext"
+            type="button"
+            title="手动压缩当前会话：摘要更早对话，保留最初目标和最近几轮原文。窗口约 80% 时任务中也会自动压缩。"
+          >
+            压缩上下文
+          </button>
+          <button
+            class="btn chat-extra"
             id="btnToggleChatToc"
             type="button"
             title="显示/隐藏对话目录"
-            aria-pressed="true"
+            aria-pressed="false"
           >目录</button>
         </div>
-        <div class="chat-body" id="chatBody">
-          <aside class="chat-toc" id="chatToc" aria-label="对话目录">
+        <div class="chat-body toc-hidden" id="chatBody">
+          <aside class="chat-toc" id="chatToc" hidden aria-label="对话目录">
             <div class="chat-toc-head">
               <span class="chat-toc-title">目录</span>
               <span class="chat-toc-count" id="chatTocCount">0</span>
@@ -344,14 +307,15 @@
           </aside>
           <div class="messages" id="messages">
             <div class="welcome">
-              <div class="logo-lg"><div class="e-tiles"><div class="tile v"></div><div class="tile th"></div><div class="tile mh"></div><div class="tile bh"></div></div></div>
+              <div class="logo-lg" aria-hidden="true">
+                <img class="logo-img" src="assets/logo.png" alt="" width="56" height="56" draggable="false" />
+              </div>
               <h2>今天想写点什么？</h2>
-              <div>Agent 可读写文件、搜索、跑命令、看 Git。<br/>支持项目规则 AGENTS.md · 选区入聊 · Inline Edit</div>
-              <div class="free-badge">FREE · NO CREDITS · BYOK</div>
+              <div>打开文件夹，说话，文件会改。你审。</div>
             </div>
           </div>
         </div>
-        <!-- 本轮 Agent 写盘摘要 + 一键撤销（对齐 Quest Changes） -->
+        <!-- 本轮 Agent 写盘：确认或撤销 -->
         <div class="chat-changes" id="chatChanges" hidden>
           <div class="chat-changes-head">
             <span class="chat-changes-title">本轮改动</span>
@@ -372,6 +336,14 @@
           data-resize="chat-composer"
           title="拖动调整 Chat 输入区高度"
         ></div>
+        <div class="review-gate" id="reviewGate" hidden>
+          <div class="review-gate-title">本轮改了文件。先审。</div>
+          <div class="review-gate-sub">确认或全部撤销之后，再继续说话。</div>
+          <div class="review-gate-actions">
+            <button type="button" class="btn" id="btnReviewReject">全部撤销</button>
+            <button type="button" class="btn primary" id="btnReviewAccept">确认</button>
+          </div>
+        </div>
         <div class="composer" id="chatComposer">
           <div class="run-indicator" id="runIndicator" hidden>
             <span class="run-spinner" aria-hidden="true"></span>
@@ -386,15 +358,41 @@
           <div class="composer-row">
             <div class="composer-left">
               <span id="statusText" class="status-idle">就绪</span>
-              <button
-                type="button"
-                class="btn auth-toggle"
-                id="btnAutoApprove"
-                title="开：读写文件/安全命令自动执行，仅高危险命令仍询问。关：多数操作每次询问。"
-                aria-pressed="false"
-              >
-                自动授权 · 关
-              </button>
+              <div class="perm-wrap" id="permWrap">
+                <button
+                  type="button"
+                  class="btn auth-toggle"
+                  id="btnPermissionMode"
+                  title="权限：变更前确认 / 自动编辑 / 计划模式 / 高危才询问 / 完全授权"
+                  aria-haspopup="menu"
+                  aria-expanded="false"
+                  aria-controls="permMenu"
+                >
+                  自动编辑
+                </button>
+                <div class="perm-menu" id="permMenu" role="menu" hidden>
+                  <button type="button" class="perm-item" role="menuitemradio" data-mode="confirm">
+                    <span class="perm-item-title">变更前确认</span>
+                    <span class="perm-item-desc">改文件前先问我</span>
+                  </button>
+                  <button type="button" class="perm-item" role="menuitemradio" data-mode="auto_edit">
+                    <span class="perm-item-title">自动编辑</span>
+                    <span class="perm-item-desc">自动编辑文件</span>
+                  </button>
+                  <button type="button" class="perm-item" role="menuitemradio" data-mode="plan">
+                    <span class="perm-item-title">计划模式</span>
+                    <span class="perm-item-desc">编辑前先出计划</span>
+                  </button>
+                  <button type="button" class="perm-item" role="menuitemradio" data-mode="full">
+                    <span class="perm-item-title">高危才询问</span>
+                    <span class="perm-item-desc">只有高危命令才问</span>
+                  </button>
+                  <button type="button" class="perm-item" role="menuitemradio" data-mode="unrestricted">
+                    <span class="perm-item-title">完全授权</span>
+                    <span class="perm-item-desc">不问，模型自己判断</span>
+                  </button>
+                </div>
+              </div>
               <button class="btn" id="btnAttach" type="button" title="添加文件附件">
                 ＋附件
               </button>
@@ -417,14 +415,11 @@
     </div>
 
     <footer class="statusbar">
-      <span class="item free">FREE</span>
-      <span class="item clickable" id="sbQuest" title="Quest 状态">Quest</span>
       <span class="item clickable" id="sbModel">model</span>
-      <span class="item" id="sbMode">Agent</span>
       <span
         class="item clickable"
         id="sbContext"
-        title="上下文窗口占用（已用 / 容量）"
+        title="上下文窗口占用（已用 / 容量）。点击设置容量：0 = 按模型自动"
       >ctx —</span>
       <span
         class="item clickable"
@@ -432,11 +427,10 @@
         title="平均缓存命中率（API 返回或本地前缀复用估算）"
       >cache —</span>
       <span class="item grow" id="sbStatus">就绪</span>
-      <span class="item clickable" id="sbProblems" title="打开问题面板">0 问题</span>
+      <span class="item clickable hidden" id="sbProblems" hidden title="打开问题面板">0 问题</span>
       <span class="item" id="sbBranch">git</span>
       <span class="item" id="sbFile">—</span>
       <span class="item">UTF-8</span>
-      <span class="item">Quest UI</span>
     </footer>
   </div>
 
@@ -444,10 +438,14 @@
   <div class="modal-backdrop" id="modalProviders">
     <div class="modal">
       <header>
-        <h3>模型服务商（全部免费接入）</h3>
+        <h3>模型服务商（接口接入免费，模型额度以服务商为准）</h3>
         <button class="icon-btn" data-close="modalProviders">✕</button>
       </header>
       <div class="body">
+        <div class="field" style="font-size:12px;line-height:1.6">
+          <label><input id="keylessFallbackToggle" type="checkbox" /> 主服务商连接故障时使用 Pollinations 无密钥兜底</label>
+          <div style="color:var(--text-muted)">默认关闭。开启即同意将当前对话与工具描述发送至 Pollinations；已输出内容后不切换，不绕过欠费、权限或限流。匿名通道按 16 秒间隔排队，可随时停止。</div>
+        </div>
         <div class="list" id="providerList"></div>
       </div>
       <div class="footer">
@@ -467,6 +465,7 @@
           <label>快速预设（第三方模型）</label>
           <select id="pfPreset">
             <option value="">— 手动填写 —</option>
+            <option value="pollinations">Pollinations 无密钥（文本 / 工具，公共端点）</option>
             <option value="ollama">Ollama 本机免费</option>
             <option value="lmstudio">LM Studio 本机</option>
             <option value="deepseek">DeepSeek</option>
@@ -490,6 +489,7 @@
           </select>
         </div>
         <div class="field"><label>Base URL</label><input id="pfBaseUrl" placeholder="https://api.xxx.com/v1" /></div>
+        <div id="pfKeylessNotice" hidden style="font-size:12px;color:var(--text-muted);line-height:1.6">Pollinations 匿名文本端点无需领取 Key；请求会发送至第三方。支持文本、工具调用和上游返回的思考内容，不保证模型、额度或可用性。不支持此通道的图片/音频输入；新 gen 端点需要自己的 Key。</div>
         <div class="field">
           <label>API Key</label>
           <div class="input-with-toggle">
@@ -511,8 +511,19 @@
             <option value="false">禁用</option>
           </select>
         </div>
+        <div class="field" title="Pi OAuth provider：填 authorizeUrl / tokenUrl / clientId 后保存，即可用「OAuth 登录」授权（API Key 可留空）">
+          <label>OAuth 登录（可选，Pi 支持）</label>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <input id="pfOAuthAuthorizeUrl" placeholder="authorizeUrl，如 https://xxx/oauth/authorize" />
+            <input id="pfOAuthTokenUrl" placeholder="tokenUrl，如 https://xxx/oauth/token" />
+            <input id="pfOAuthClientId" placeholder="clientId" />
+            <input id="pfOAuthScopes" placeholder="scopes（空格分隔，可选）" />
+            <button type="button" class="btn" id="btnOAuthLogin" style="align-self:flex-start">OAuth 登录</button>
+            <span id="pfOAuthStatus" style="font-size:11px;color:var(--text-muted)"></span>
+          </div>
+        </div>
         <div class="field" style="font-size:11px;color:var(--text-muted);line-height:1.45">
-          IDE Chat / Quest / 补全共用这些服务商。保存后可在顶栏「模型」或 Quest 新建任务里切换。
+          Chat / 补全共用这些服务商。保存后可在顶栏「模型」切换。
         </div>
       </div>
       <div class="footer">
@@ -546,11 +557,14 @@
         <button class="icon-btn" data-close="modalSettings">✕</button>
       </header>
       <div class="body">
-        <div class="field">
-          <label>Agent 模式</label>
-          <select id="stAgentMode">
-            <option value="true">开启</option>
-            <option value="false">关闭（Ask）</option>
+        <div class="field" title="改文件或跑命令前是否询问">
+          <label>权限模式</label>
+          <select id="stPermissionMode">
+            <option value="confirm">变更前确认 — 改文件前先问我</option>
+            <option value="auto_edit">自动编辑 — 自动编辑文件</option>
+            <option value="plan">计划模式 — 编辑前先出计划</option>
+            <option value="full">高危才询问 — 只有高危命令才问</option>
+            <option value="unrestricted">完全授权 — 不问，模型自己判断</option>
           </select>
         </div>
         <div class="field">
@@ -558,21 +572,7 @@
           <select id="stTerminal">
             <option value="askEveryTime">每次询问</option>
             <option value="autoSafe">安全命令自动</option>
-            <option value="autoAll">全部自动</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>完全自动（含危险命令）</label>
-          <select id="stAutoTools">
-            <option value="false">否（推荐）</option>
-            <option value="true">是 — 连危险终端也跳过确认</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>自识别授权运行</label>
-          <select id="stAutoApproveSafe">
-            <option value="false">关（每次确认）</option>
-            <option value="true">开（读写文件+安全命令自动，仅危险命令仍问）</option>
+            <option value="autoAll">全部自动（含危险）</option>
           </select>
         </div>
         <div class="field">
@@ -583,7 +583,7 @@
           </select>
         </div>
         <div class="field">
-          <label>行内补全（NES 简化）</label>
+          <label>行内补全</label>
           <select id="stCompletion">
             <option value="true">开启</option>
             <option value="false">关闭</option>
@@ -597,15 +597,112 @@
             <option value="auto">跟随用户</option>
           </select>
         </div>
-        <div class="field"><label>Max Tokens</label><input id="stMaxTokens" type="number" /></div>
+        <div class="field" title="回复最大 token 数。0 = 自动（用模型默认上限，不限制）"><label>Max Tokens（0=自动）</label><input id="stMaxTokens" type="number" min="0" /></div>
         <div class="field"><label>Temperature</label><input id="stTemp" type="number" step="0.1" /></div>
-        <div class="field" title="单次对话内模型↔工具循环次数；过小会中途停住">
-          <label>Agent 工具轮次上限</label>
-          <input id="stAgentMaxRounds" type="number" min="4" max="80" />
+        <div class="field" title="选择关闭思考时，EMSoder 不发送 reasoning_effort、reasoning 或 thinking 参数；其他档位按模型支持情况发送。">
+          <label>思考强度</label>
+          <select id="stReasoningEffort">
+            <option value="off">关闭思考</option>
+            <option value="low">低</option>
+            <option value="medium">中</option>
+            <option value="high">高</option>
+            <option value="ultra">超高</option>
+          </select>
         </div>
-        <div class="field" title="触达上限或模型提前收口时自动续跑次数，0=关">
-          <label>Agent 自动续跑次数</label>
-          <input id="stAgentAutoContinue" type="number" min="0" max="5" />
+        <div class="field" title="默认使用 Pi sidecar。旧 EMSoder 后端仅用于 Pi 启动失败、兼容性问题或回归排障">
+          <label>Agent 运行引擎</label>
+          <select id="stAgentBackend">
+            <option value="pi">Pi sidecar（默认）</option>
+            <option value="emsoder">EMSoder 旧后端（回退）</option>
+          </select>
+        </div>
+        <div class="field" title="Pi 运行模式：自动=直接执行；计划=先出计划等你批准再执行；目标=自动续跑直到完成">
+          <label>运行模式（Pi plan/goal）</label>
+          <select id="stRunMode">
+            <option value="auto">自动</option>
+            <option value="plan">计划（先审批）</option>
+            <option value="goal">目标（自动跑完）</option>
+          </select>
+        </div>
+        <div class="field" title="单次对话内模型↔工具循环次数。0 = 不限制，直到模型做完或你点停止">
+          <label>Agent 工具轮次上限（0=不限制）</label>
+          <input id="stAgentMaxRounds" type="number" min="0" />
+        </div>
+        <div class="field" title="模型提前收口时自动再跑。-1 = 不限制；0 = 关">
+          <label>Agent 自动续跑次数（-1=不限制）</label>
+          <input id="stAgentAutoContinue" type="number" min="-1" />
+        </div>
+        <div class="field" title="强制上下文窗口容量（token）。0 = 按模型自动判断；填了就对所有模型生效">
+          <label>上下文窗口容量（0=自动）</label>
+          <input id="stContextWindow" type="number" min="0" step="1000" style="width:140px" />
+        </div>
+        <div class="field">
+          <label>环境变量与密钥</label>
+          <div class="hint">已移至左侧栏“环境变量”图标统一管理 Provider、图片服务与自定义终端/Skill 变量。</div>
+        </div>
+        <div class="field" title="上下文占用达到该百分比时，任务中自动压缩较早对话（40–99）">
+          <label>自动压缩阈值（%）</label>
+          <input id="stAutoCompressAt" type="number" min="40" max="99" step="1" style="width:100px" />
+        </div>
+        <div class="field" title="EMSoder 全局声音总开关：关闭后应用不发出任何声音（含完成提示音）">
+          <label>全局声音</label>
+          <select id="stSoundEnabled">
+            <option value="true">开启</option>
+            <option value="false">关闭（全局静音）</option>
+          </select>
+        </div>
+        <div class="field" title="完成提示音音量，0（静音）到 1（最大）。全局声音关闭时此项无效">
+          <label>提示音音量（0–1）</label>
+          <input id="stSoundVolume" type="number" min="0" max="1" step="0.1" style="width:100px" />
+        </div>
+        <div class="field" title="桌面悬浮球：常驻置顶的小圆点，显示任务是跑/待审/空闲">
+          <label>桌面悬浮球（显示任务状态）</label>
+          <select id="stFloatingBall">
+            <option value="false">关闭</option>
+            <option value="true">开启</option>
+          </select>
+        </div>
+        <div class="field" title="图片搜索来源：生成 PPT/PDF 时 search_images 用哪个图库">
+          <label>图片搜索来源</label>
+          <select id="stImageProvider">
+            <option value="pexels">Pexels</option>
+            <option value="unsplash">Unsplash</option>
+          </select>
+        </div>
+        <div class="field" title="Pexels API Key（免费申请：https://www.pexels.com/api/）。留空表示不改动已保存的 Key">
+          <label>Pexels API Key</label>
+          <input id="stPexelsKey" type="password" placeholder="已保存则显示 ***，留空不改动" autocomplete="off" />
+        </div>
+        <div class="field" title="Unsplash Access Key（免费申请：https://unsplash.com/developers）。留空表示不改动已保存的 Key">
+          <label>Unsplash Access Key</label>
+          <input id="stUnsplashKey" type="password" placeholder="已保存则显示 ***，留空不改动" autocomplete="off" />
+        </div>
+        <div class="field" title="只供 ppt-master 运行时图片生成使用，Key 不会传给普通终端、模型或日志">
+          <label>ppt-master 图片生成后端</label>
+          <select id="stImageGenBackend">
+            <option value="modelscope">ModelScope（推荐，免费额度）</option>
+            <option value="zhipu">智谱 GLM Image</option>
+            <option value="openai">OpenAI Compatible</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="siliconflow">SiliconFlow</option>
+            <option value="volcengine">火山方舟</option>
+            <option value="qwen">通义 DashScope</option>
+            <option value="minimax">MiniMax</option>
+          </select>
+        </div>
+        <div class="field" title="留空使用所选后端的默认模型。例如 ModelScope 默认 Tongyi-MAI/Z-Image-Turbo">
+          <label>图片生成模型（可留空）</label>
+          <input id="stImageGenModel" placeholder="留空使用后端默认模型" />
+        </div>
+        <div class="field" title="仅 OpenAI Compatible 或自建图片生成网关需要；留空使用后端默认地址">
+          <label>图片生成 Base URL（可留空）</label>
+          <input id="stImageGenBaseUrl" placeholder="https://your-gateway.example.com/v1" />
+        </div>
+        <div class="field" title="仅本机保存；留空不会覆盖已保存的 Key，也不会进入导出配置或安装包">
+          <label>图片生成 API Key</label>
+          <input id="stImageGenKey" type="password" placeholder="已保存则显示 ***，留空不改动" autocomplete="off" />
+          <button type="button" class="btn" id="btnTestImageGen" style="margin-top:6px">测试图片生成（消耗一次额度）</button>
+          <div id="stImageGenTestResult" style="font-size:11px;color:var(--text-muted);margin-top:5px"></div>
         </div>
         <div class="field"><label>编辑器字号</label><input id="stFont" type="number" /></div>
         <div class="field"><label>额外系统提示</label><textarea id="stSystem" rows="3"></textarea></div>
@@ -644,6 +741,7 @@
       <div class="footer" style="flex-wrap:wrap;gap:8px">
         <button class="btn" id="btnExportConfig" title="导出配置（API Key 脱敏）">导出配置</button>
         <button class="btn" id="btnImportConfig" title="从 JSON 导入配置">导入配置</button>
+        <button class="btn" id="btnExportLogs" title="导出审计日志（命令执行 / 文件写入 / 拦截记录等）">导出日志</button>
         <span style="flex:1"></span>
         <button class="btn" data-close="modalSettings">取消</button>
         <button class="btn primary" id="btnSaveSettings">保存</button>
@@ -659,7 +757,7 @@
       </header>
       <div class="body" style="padding-top:8px">
         <div class="field" style="margin-bottom:8px">
-          <input id="paletteInput" placeholder="输入命令… 例如 模型 / Quest / 终端" autocomplete="off" />
+          <input id="paletteInput" placeholder="输入命令… 例如 模型 / 终端 / 设置" autocomplete="off" />
         </div>
         <div class="list" id="paletteList" style="max-height:360px;overflow:auto"></div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Ctrl+Shift+P 打开 · ↑↓ 选择 · Enter 执行</div>
@@ -810,6 +908,24 @@
     </div>
   </div>
 
+  <!-- Styled async prompt dialog (replaces native prompt()) -->
+  <div class="modal-backdrop" id="modalPrompt">
+    <div class="modal modal-confirm">
+      <header>
+        <h3 id="modalPromptTitle">输入内容</h3>
+        <button class="icon-btn" data-close="modalPrompt">✕</button>
+      </header>
+      <div class="body">
+        <p id="modalPromptMsg" class="confirm-msg"></p>
+        <input id="modalPromptInput" autocomplete="off" />
+      </div>
+      <div class="footer">
+        <button class="btn" id="modalPromptCancel">取消</button>
+        <button class="btn primary" id="modalPromptOk">保存</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Styled async confirm dialog (replaces native confirm()) -->
   <div class="modal-backdrop" id="modalConfirm">
     <div class="modal modal-confirm">
@@ -835,14 +951,40 @@
     </div>
   </div>
 
+  <div class="confirm-bar plan-bar" id="planBar">
+    <div class="msg" id="planMsg"></div>
+    <div class="actions">
+      <button class="btn" id="btnPlanReject">取消计划</button>
+      <button class="btn primary" id="btnPlanApprove">批准并执行</button>
+    </div>
+  </div>
+
+  <script src="js/tauri-bridge.js"></script>
   <script src="js/dom-util.js"></script>
+  <script src="js/app-state.js"></script>
+  <script src="js/modules/markdown.js"></script>
+  <script src="js/modules/context-stats.js"></script>
+  <script src="js/modules/reasoning-menu.js"></script>
+  <script src="js/modules/permission-ui.js"></script>
+  <script src="js/modules/command-palette.js"></script>
+  <script src="js/modules/memory-side.js"></script>
+  <script src="js/modules/search-side.js"></script>
+  <script src="js/modules/mcp-side.js"></script>
+  <script src="js/modules/env-side.js"></script>
+  <script src="js/modules/skills-side.js"></script>
+  <script src="js/modules/providers-modal.js"></script>
+  <script src="js/modules/settings.js"></script>
+  <script src="js/modules/inline-edit.js"></script>
+  <script src="js/modules/tabs.js"></script>
+  <script src="js/modules/side-panels.js"></script>
+  <script src="js/modules/mention-picker.js"></script>
+  <script src="js/modules/drafts.js"></script>
   <script src="js/resize-columns.js"></script>
   <script src="js/monaco-setup.js"></script>
   <script src="js/lang-suggest.js"></script>
   <script src="js/lsp-host.js"></script>
   <script src="js/editor-host.js"></script>
   <script src="js/panels.js"></script>
-  <script src="js/quest.js"></script>
   <script src="js/chat-virtual.js"></script>
   <script src="js/app.js"></script>
 </body>

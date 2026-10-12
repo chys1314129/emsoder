@@ -125,6 +125,38 @@
         "scrollbarSlider.hoverBackground": "#0369a1aa",
       },
     });
+    // 白天模式：亮色编辑器主题
+    monaco.editor.defineTheme("emsoder-light", {
+      base: "vs",
+      inherit: true,
+      rules: [
+        { token: "comment", foreground: "8a8a8a", fontStyle: "italic" },
+        { token: "keyword", foreground: "0d44a8" },
+        { token: "string", foreground: "0a7c3a" },
+        { token: "number", foreground: "b45309" },
+        { token: "type", foreground: "7c3aed" },
+      ],
+      colors: {
+        "editor.background": "#ffffff",
+        "editor.foreground": "#1f1e1a",
+        "editorLineNumber.foreground": "#b0b0b0",
+        "editorLineNumber.activeForeground": "#0d44a8",
+        "editor.selectionBackground": "#0ea5e933",
+        "editor.inactiveSelectionBackground": "#0ea5e922",
+        "editorCursor.foreground": "#0d44a8",
+        "editor.lineHighlightBackground": "#0ea5e90d",
+        "editorIndentGuide.background": "#e0e0e0",
+        "editorIndentGuide.activeBackground": "#0ea5e944",
+        "editorWidget.background": "#f8f8f5",
+        "editorWidget.border": "#d0d0d0",
+        "input.background": "#ffffff",
+        "dropdown.background": "#ffffff",
+        "list.activeSelectionBackground": "#0ea5e922",
+        "list.hoverBackground": "#0ea5e90d",
+        "scrollbarSlider.background": "#c0c0c088",
+        "scrollbarSlider.hoverBackground": "#0d44a1aa",
+      },
+    });
   }
 
   function loadMonaco() {
@@ -163,6 +195,12 @@
         try {
           window.require(["vs/editor/editor.main"], () => {
             defineSkyTheme();
+            // Monaco 加载后立即同步当前主题（applyTheme 可能先于此执行过）
+            try {
+              var t = document.body.getAttribute("data-theme") ||
+                document.documentElement.getAttribute("data-theme");
+              window.monaco.editor.setTheme(t === "light" ? "emsoder-light" : "emsoder-sky");
+            } catch (e) { /* ignore */ }
             resolve(window.monaco);
           });
         } catch (err) {

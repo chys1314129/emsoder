@@ -37,6 +37,29 @@ function toOpenAIMessages(messages) {
   });
 }
 
+/** OpenAI / Gemini / DeepSeek 等兼容接口的思考档位 → reasoning_effort */
+function applyOpenAIReasoning(body, req) {
+  const effort = String(req.reasoningEffort || "").toLowerCase().trim();
+  if (!effort || effort === "off" || effort === "none") return;
+  // OpenAI o-series / gpt-5 等：low|medium|high；超高映射 high（多数网关无 xhigh）
+  // 部分兼容网关（OpenRouter、硅基流动、DeepSeek reasoner）会忽略未知字段
+  const map = {
+    low: "low",
+    medium: "medium",
+    high: "high",
+    ultra: "high",
+  };
+  const mapped = map[effort];
+  if (!mapped) return;
+  body.reasoning_effort = mapped;
+  // Pi 传入的动态思考 token 预算：部分网关（OpenRouter/DeepSeek 系）认这个字段
+  if (req.thinkingBudget && Number(req.thinkingBudget) > 0) {
+    body.thinking_token_budget = Math.floor(Number(req.thinkingBudget));
+  }
+  // 部分新模型用 max_completion_tokens 且不接受 temperature
+  // 不主动删 temperature，由网关自行忽略
+}
+
 async function* streamOpenAIChat(provider, req) {
   const path = provider.chatPath || "/chat/completions";
   const url = joinUrl(provider.baseUrl, path);
@@ -53,12 +76,14 @@ async function* streamOpenAIChat(provider, req) {
     body.tools = req.tools;
     body.tool_choice = "auto";
   }
+  applyOpenAIReasoning(body, req);
 
   const headers = {
     "Content-Type": "application/json",
     ...(provider.headers || {}),
   };
-  if (provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
+  const auth = req.oauthBearerToken || provider.apiKey;
+  if (auth) headers.Authorization = `Bearer ${auth}`;
 
   const timeoutMs = req.timeoutMs ?? provider.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   let lastError = null;
@@ -112,6 +137,87 @@ async function* streamOpenAIChat(provider, req) {
     const decoder = new TextDecoder();
     let buffer = "";
     const toolAcc = new Map();
+    let sawCompletion = false;
+
+    function* parseLine(line) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) return;
+      const data = trimmed.slice(5).trim();
+      if (data === "[DONE]") {
+        sawCompletion = true;
+        yield { type: "done" };
+        return;
+      }
+      let json;
+      try {
+        json = JSON.parse(data);
+      } catch {
+        return;
+      }
+      // A 200 SSE stream may carry authentication/quota errors, not choices.
+      if (json.error) {
+        const remote = json.error;
+        const status = Number(remote.status ?? remote.statusCode ?? json.status);
+        const errorCode = String(remote.code || "remote_error");
+        yield { type: "error", status: Number.isFinite(status) ? status : null, errorCode,
+          error: `Provider error ${Number.isFinite(status) ? status : ""} ${errorCode}: ${String(remote.message || remote).slice(0, 800)}` };
+        return;
+      }
+      // usage often arrives on a trailing chunk (with or without choices)
+      if (json.usage) {
+        yield { type: "usage", usage: normalizeOpenAIUsage(json.usage) };
+      }
+      const choice = json.choices?.[0];
+      if (!choice) return;
+      const finishReason = choice.finish_reason;
+      if (finishReason != null) {
+        if (finishReason !== "stop" && finishReason !== "tool_calls") {
+          yield { type: "error", errorCode: "incomplete_response",
+            error: `响应未成功完成（finish_reason: ${finishReason}）` };
+          return;
+        }
+        sawCompletion = true;
+      }
+      const delta = choice.delta || {};
+      if (typeof delta.content === "string" && delta.content) {
+        yield { type: "text", text: delta.content };
+      }
+      const reasoning = delta.reasoning_content || delta.reasoning;
+      if (typeof reasoning === "string" && reasoning) {
+        yield { type: "reasoning", text: reasoning };
+      }
+      if (Array.isArray(delta.tool_calls)) {
+        for (const tc of delta.tool_calls) {
+          const index = typeof tc.index === "number" ? tc.index : 0;
+          let acc = toolAcc.get(index);
+          if (!acc) {
+            acc = {
+              id: tc.id || `call_${index}`,
+              type: "function",
+              function: { name: "", arguments: "" },
+            };
+            toolAcc.set(index, acc);
+          }
+          if (tc.id) acc.id = tc.id;
+          if (tc.function?.name) acc.function.name += tc.function.name;
+          if (tc.function?.arguments) {
+            acc.function.arguments += tc.function.arguments;
+          }
+          yield {
+            type: "tool_call",
+            toolCall: {
+              index,
+              id: acc.id,
+              type: "function",
+              function: {
+                name: acc.function.name,
+                arguments: acc.function.arguments,
+              },
+            },
+          };
+        }
+      }
+    }
 
     try {
       while (true) {
@@ -125,70 +231,25 @@ async function* streamOpenAIChat(provider, req) {
           return;
         }
         const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+        buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
         const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() || "";
-
+        if (done && buffer) {
+          lines.push(buffer);
+          buffer = "";
+        }
         for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data:")) continue;
-          const data = trimmed.slice(5).trim();
-          if (data === "[DONE]") {
-            yield { type: "done" };
-            return;
-          }
-          let json;
-          try {
-            json = JSON.parse(data);
-          } catch {
-            continue;
-          }
-          // usage often arrives on a trailing chunk (with or without choices)
-          if (json.usage) {
-            yield { type: "usage", usage: normalizeOpenAIUsage(json.usage) };
-          }
-          const choice = json.choices?.[0];
-          if (!choice) continue;
-          const delta = choice.delta || {};
-          if (typeof delta.content === "string" && delta.content) {
-            yield { type: "text", text: delta.content };
-          }
-          if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
-            yield { type: "reasoning", text: delta.reasoning_content };
-          }
-          if (Array.isArray(delta.tool_calls)) {
-            for (const tc of delta.tool_calls) {
-              const index = typeof tc.index === "number" ? tc.index : 0;
-              let acc = toolAcc.get(index);
-              if (!acc) {
-                acc = {
-                  id: tc.id || `call_${index}`,
-                  type: "function",
-                  function: { name: "", arguments: "" },
-                };
-                toolAcc.set(index, acc);
-              }
-              if (tc.id) acc.id = tc.id;
-              if (tc.function?.name) acc.function.name += tc.function.name;
-              if (tc.function?.arguments) {
-                acc.function.arguments += tc.function.arguments;
-              }
-              yield {
-                type: "tool_call",
-                toolCall: {
-                  index,
-                  id: acc.id,
-                  type: "function",
-                  function: {
-                    name: acc.function.name,
-                    arguments: acc.function.arguments,
-                  },
-                },
-              };
-            }
+          for (const event of parseLine(line)) {
+            yield event;
+            if (event.type === "error" || event.type === "done") return;
           }
         }
+        if (done) break;
+      }
+      if (toolAcc.size && !sawCompletion) {
+        yield { type: "error", errorCode: "incomplete_response",
+          error: "工具调用流提前结束，缺少成功完成标记" };
+        return;
       }
       yield { type: "done" };
       return;
@@ -215,7 +276,8 @@ async function chatOpenAIOnce(provider, req) {
     "Content-Type": "application/json",
     ...(provider.headers || {}),
   };
-  if (provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
+  const auth = req.oauthBearerToken || provider.apiKey;
+  if (auth) headers.Authorization = `Bearer ${auth}`;
 
   const body = {
     model: req.model,
@@ -224,6 +286,7 @@ async function chatOpenAIOnce(provider, req) {
     temperature: req.temperature ?? 0.2,
   };
   if (req.maxTokens) body.max_tokens = req.maxTokens;
+  applyOpenAIReasoning(body, req);
 
   const timeoutMs = req.timeoutMs ?? provider.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxRetries =

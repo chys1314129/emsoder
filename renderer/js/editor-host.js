@@ -21,10 +21,14 @@
     }
     const el = document.getElementById("monacoEditor");
     if (!el) throw new Error("#monacoEditor missing");
+    const initialTheme =
+      document.body.getAttribute("data-theme") === "light"
+        ? "emsoder-light"
+        : "emsoder-sky";
     editor = monaco.editor.create(el, {
       value: "",
       language: "plaintext",
-      theme: "emsoder-sky",
+      theme: initialTheme,
       automaticLayout: true,
       fontSize: 14,
       fontFamily:
@@ -200,6 +204,26 @@
     return model ? model.getLanguageId() : "plaintext";
   }
 
+  /** 关闭标签时释放 Monaco model，防止模型无限累积（含语言服务引用） */
+  function disposeModel(filePath) {
+    if (!filePath) return;
+    let uri;
+    try {
+      uri = monaco.Uri.file(filePath);
+    } catch {
+      return;
+    }
+    const model = monaco.editor.getModel(uri);
+    if (model) {
+      try {
+        model.dispose();
+      } catch { /* ignore */ }
+    }
+    try {
+      window.EmsoderLsp?.forgetFile?.(filePath);
+    } catch { /* ignore */ }
+  }
+
   function revealLine(line) {
     if (!editor) return;
     editor.revealLineInCenter(line);
@@ -328,6 +352,7 @@
     revealLine,
     focus,
     layout,
+    disposeModel,
     setOnChange,
     setOnCursor,
     enableCompletion,

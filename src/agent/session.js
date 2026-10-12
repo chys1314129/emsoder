@@ -1,6 +1,8 @@
 const fs = require("fs");
 const { randomUUID } = require("crypto");
 const { sessionsPath } = require("../core/config");
+const { clipChangeBodies } = require("./fileChanges");
+const { normalizeContextHistory } = require("./contextHistory");
 
 const SAVE_DEBOUNCE_MS = 450;
 const MAX_SESSIONS = 40;
@@ -52,11 +54,49 @@ class SessionStore {
       const list = this.list().slice(0, MAX_SESSIONS).map((s) => {
         const copy = { ...s };
         if (Array.isArray(copy.messages) && copy.messages.length > MAX_MESSAGES_PER_SESSION) {
-          // keep tree roots near the end — simple cap by recency of createdAt
-          const sorted = [...copy.messages].sort(
-            (a, b) => (a.createdAt || 0) - (b.createdAt || 0)
-          );
-          copy.messages = sorted.slice(-MAX_MESSAGES_PER_SESSION);
+          // 截断保树：保留 activeLeafId 的完整祖先链 + 最新消息，
+          // 避免按 createdAt 简单裁剪打断 parentId 链（分支丢失）
+          const byId = new Map(copy.messages.map((m) => [m.id, m]));
+          const keep = new Set();
+          // 1) active leaf 的祖先链
+          let cur = byId.get(copy.activeLeafId) || copy.messages[copy.messages.length - 1];
+          while (cur) {
+            keep.add(cur.id);
+            cur = cur.parentId ? byId.get(cur.parentId) : null;
+          }
+          // 2) 每个保留节点的兄弟（保持分支选择不丢失）
+          for (const m of copy.messages) {
+            if (keep.has(m.id)) continue;
+            const parent = m.parentId ? byId.get(m.parentId) : null;
+            if (parent && keep.has(parent.id)) keep.add(m.id);
+          }
+          // 3) 最新消息兜底（可能包含刚 append 的尾巴）
+          for (const m of copy.messages.slice(-Math.min(50, MAX_MESSAGES_PER_SESSION))) {
+            keep.add(m.id);
+          }
+          // 4) 超限时先裁最旧的非保留项，再裁保留项（尽量不破坏路径）
+          const kept = copy.messages.filter((m) => keep.has(m.id));
+          if (kept.length > MAX_MESSAGES_PER_SESSION) {
+            const overflow = kept.length - MAX_MESSAGES_PER_SESSION;
+            const removable = copy.messages
+              .filter((m) => !keep.has(m.id))
+              .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+            for (let i = 0; i < overflow && i < removable.length; i++) {
+              keep.delete(removable[i].id);
+            }
+            if (kept.length - overflow > 0) {
+              copy.messages = copy.messages.filter(
+                (m) => keep.has(m.id) || kept.length - overflow <= 0
+              );
+            }
+          }
+          if (kept.length <= MAX_MESSAGES_PER_SESSION) {
+            copy.messages = kept;
+          } else {
+            // 极端情况仍超限：砍最旧（保留链上节点）
+            const anchored = copy.messages.filter((m) => keep.has(m.id));
+            copy.messages = anchored.slice(-MAX_MESSAGES_PER_SESSION);
+          }
           if (
             copy.activeLeafId &&
             !copy.messages.some((m) => m.id === copy.activeLeafId)
@@ -138,15 +178,26 @@ class SessionStore {
     return this.sessions.get(id);
   }
 
-  create(mode = "agent") {
+  setWorkspaceRoot(workspaceRoot, sessionId = null) {
+    const session = this._resolveSession(sessionId);
+    if (!session) return null;
+    session.workspaceRoot = String(workspaceRoot || "");
+    session.updatedAt = Date.now();
+    this.save();
+    return session;
+  }
+
+  create(mode = "agent", workspaceRoot = "") {
     const now = Date.now();
     const session = {
       id: randomUUID(),
       title: "新对话",
       mode,
+      workspaceRoot: String(workspaceRoot || ""),
+      runStatus: "idle",
       messages: [],
       activeLeafId: null,
-      /** Chat 本轮 Agent 写盘快照（对齐 Quest fileChanges） */
+      /** Chat 本轮 Agent 写盘快照 */
       fileChanges: [],
       createdAt: now,
       updatedAt: now,
@@ -161,6 +212,33 @@ class SessionStore {
   beginFileChangeTurn(sessionId = null) {
     const session = this._resolveSession(sessionId);
     session.fileChanges = [];
+    session.runStatus = "running";
+    session.updatedAt = Date.now();
+    this.save();
+    return session;
+  }
+
+  /**
+   * idle | running | stopped | review
+   * review = 本轮还有未确认改动；确认/全部撤销后回 idle。
+   */
+  setRunStatus(status, sessionId = null) {
+    const session = this._resolveSession(sessionId);
+    if (!session) return null;
+    session.runStatus = normalizeRunStatus(status);
+    session.updatedAt = Date.now();
+    this.save();
+    return session;
+  }
+
+  /** 一轮结束：有未撤销改动 → 待审；否则 idle / stopped */
+  settleRun(reason, sessionId = null) {
+    const session = this._resolveSession(sessionId);
+    if (!session) return null;
+    const pending = (session.fileChanges || []).some((f) => f && !f.rejected);
+    if (pending) session.runStatus = "review";
+    else if (reason === "stopped") session.runStatus = "stopped";
+    else session.runStatus = "idle";
     session.updatedAt = Date.now();
     this.save();
     return session;
@@ -198,6 +276,9 @@ class SessionStore {
     const row = session.fileChanges.find((f) => f.path === filePath);
     if (!row) return null;
     row.rejected = true;
+    if (!(session.fileChanges || []).some((f) => f && !f.rejected)) {
+      session.runStatus = session.runStatus === "running" ? "running" : "idle";
+    }
     session.updatedAt = Date.now();
     this.save();
     return row;
@@ -218,6 +299,7 @@ class SessionStore {
   clearFileChanges(sessionId = null) {
     const session = this._resolveSession(sessionId);
     session.fileChanges = [];
+    if (session.runStatus === "review") session.runStatus = "idle";
     session.updatedAt = Date.now();
     this.save();
     return session.fileChanges;
@@ -248,35 +330,23 @@ class SessionStore {
     if (!Array.isArray(session.fileChanges) || !filePath) return null;
     const row = session.fileChanges.find((f) => f.path === filePath);
     if (!row) return null;
-    const cap = Math.max(4_000, Number(maxChars) || 120_000);
-    const half = Math.floor(cap / 2);
-    const clip = (s) => {
-      if (s == null) return { text: s, truncated: false };
-      const t = String(s);
-      if (t.length <= half) return { text: t, truncated: false };
-      return {
-        text: t.slice(0, half) + `\n…(截断，原长 ${t.length})`,
-        truncated: true,
-      };
-    };
-    const b = clip(row.before);
-    const a = clip(row.after);
+    const c = clipChangeBodies(row, maxChars);
     return {
       path: row.path,
       relative: row.relative || row.path,
       kind: row.kind || "edit",
       rejected: !!row.rejected,
-      before: b.text,
-      after: a.text,
-      truncated: !!(b.truncated || a.truncated),
+      before: c.before,
+      after: c.after,
+      truncated: c.truncated,
     };
   }
 
   /**
    * Append on the active branch (parent = current leaf).
    */
-  append(message) {
-    const session = this.getActive();
+  append(message, sessionId = null) {
+    const session = this._resolveSession(sessionId);
     const parentId =
       message.parentId !== undefined
         ? message.parentId
@@ -287,6 +357,8 @@ class SessionStore {
       content: message.content,
       toolName: message.toolName,
       toolCallId: message.toolCallId,
+      // 持久化 tool_calls：跨轮重建历史时避免孤儿 tool 消息（provider 会 400）
+      tool_calls: Array.isArray(message.tool_calls) ? message.tool_calls : undefined,
       // lightweight attachment meta for UI / vision re-send (no huge bodies required)
       attachments: Array.isArray(message.attachments)
         ? message.attachments
@@ -308,8 +380,8 @@ class SessionStore {
    * Edit an existing user message → new sibling branch (keeps old answers).
    * @returns {{ session, userMsg, path }}
    */
-  branchFromUserEdit(messageId, newContent) {
-    const session = this.getActive();
+  branchFromUserEdit(messageId, newContent, sessionId = null) {
+    const session = this._resolveSession(sessionId);
     const old = session.messages.find((m) => m.id === messageId);
     if (!old) throw new Error("消息不存在");
     if (old.role !== "user") throw new Error("只能编辑用户消息以创建分支");
@@ -334,6 +406,93 @@ class SessionStore {
       userMsg,
       path: getPathToLeaf(session, userMsg.id),
     };
+  }
+
+  /** Descendant ids including the root message. */
+  _branchIds(session, messageId) {
+    const ids = new Set([messageId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const m of session.messages || []) {
+        if (m?.parentId && ids.has(m.parentId) && !ids.has(m.id)) {
+          ids.add(m.id); changed = true;
+        }
+      }
+    }
+    return ids;
+  }
+
+  _repairActiveLeaf(session, removedIds = new Set()) {
+    const valid = new Set((session.messages || []).map((m) => m.id));
+    let cur = session.activeLeafId;
+    const byId = new Map((session.messages || []).map((m) => [m.id, m]));
+    while (cur && (!valid.has(cur) || removedIds.has(cur) || byId.get(cur)?.excludedFromContext)) {
+      cur = byId.get(cur)?.parentId || null;
+    }
+    session.activeLeafId = cur || null;
+  }
+
+  /** Remove a branch from future model context but keep it recoverable. */
+  excludeMessageBranch(messageId, sessionId = null) {
+    const session = this._resolveSession(sessionId);
+    const node = session?.messages?.find((m) => m.id === messageId);
+    if (!node) throw new Error("消息不存在");
+    const ids = this._branchIds(session, messageId);
+    const now = Date.now();
+    for (const m of session.messages) {
+      if (ids.has(m.id)) { m.excludedFromContext = true; m.deletedAt = now; }
+    }
+    this._repairActiveLeaf(session, ids);
+    session.updatedAt = now; this.save();
+    return { session, ids: [...ids], activeLeafId: session.activeLeafId };
+  }
+
+  /** Restore a previously excluded branch. */
+  restoreMessageBranch(messageId, sessionId = null) {
+    const session = this._resolveSession(sessionId);
+    const node = session?.messages?.find((m) => m.id === messageId);
+    if (!node) throw new Error("消息不存在");
+    const ids = this._branchIds(session, messageId);
+    for (const m of session.messages) {
+      if (ids.has(m.id)) { delete m.excludedFromContext; delete m.deletedAt; }
+    }
+    if (!session.activeLeafId) session.activeLeafId = deepestLeaf(session, messageId);
+    session.updatedAt = Date.now(); this.save();
+    return { session, ids: [...ids], activeLeafId: session.activeLeafId };
+  }
+
+  /** Permanently delete an entire tree branch; descendants are never re-parented. */
+  deleteMessageBranch(messageId, sessionId = null) {
+    const session = this._resolveSession(sessionId);
+    const node = session?.messages?.find((m) => m.id === messageId);
+    if (!node) throw new Error("消息不存在");
+    const fallback = node.parentId || null;
+    const ids = this._branchIds(session, messageId);
+    session.messages = session.messages.filter((m) => !ids.has(m.id));
+    if (ids.has(session.activeLeafId)) session.activeLeafId = fallback;
+    this._repairActiveLeaf(session, ids);
+    if (!session.messages.some((m) => m.role === "user")) session.title = "新对话";
+    session.updatedAt = Date.now(); this.save();
+    return { session, ids: [...ids], activeLeafId: session.activeLeafId };
+  }
+
+  /** Edit a plain assistant response by creating a safe sibling branch. */
+  editAssistantMessage(messageId, content, sessionId = null) {
+    const session = this._resolveSession(sessionId);
+    const old = session?.messages?.find((m) => m.id === messageId);
+    if (!old) throw new Error("消息不存在");
+    if (old.role !== "assistant" || (old.tool_calls && old.tool_calls.length)) {
+      throw new Error("只能编辑不含工具调用的助手回复");
+    }
+    const replacement = {
+      id: randomUUID(), role: "assistant", content: String(content || ""),
+      parentId: old.parentId ?? null, createdAt: Date.now(), branchedFrom: old.id,
+    };
+    session.messages.push(replacement);
+    session.activeLeafId = replacement.id;
+    session.updatedAt = Date.now(); this.save();
+    return { session, message: replacement, path: getPathToLeaf(session, replacement.id) };
   }
 
   /**
@@ -373,7 +532,8 @@ class SessionStore {
       const asSibling = getChildren(session, node.parentId).find(
         (m) => m.id === directionOrChildId
       );
-      targetId = asChild?.id || asSibling?.id || directionOrChildId;
+      // 目标 id 不存在时回退当前节点，避免 activeLeafId 悬空导致聊天区清空
+      targetId = asChild?.id || asSibling?.id || node.id;
     }
 
     // walk to deepest preferred leaf under target
@@ -387,10 +547,32 @@ class SessionStore {
     };
   }
 
-  /** Linear path for the active branch (for UI + LLM). */
+  /** Linear path for the active branch (for UI/tree navigation). */
   getActivePath(session) {
     const s = session || this.getActive();
     return getPathToLeaf(s, s.activeLeafId);
+  }
+
+  /** Protocol-safe model context: omitted branches and incomplete tool exchanges are excluded. */
+  getContextPath(session) {
+    const s = session || this.getActive();
+    const path = getPathToLeaf(s, s.activeLeafId).filter((m) => !m.excludedFromContext);
+    return normalizeContextHistory(path);
+  }
+
+  /** Root nodes of excluded branches whose parent remains on the active path. */
+  getExcludedBranches(session) {
+    const s = session || this.getActive();
+    const visibleIds = new Set(getPathToLeaf(s, s.activeLeafId).map((m) => m.id));
+    return (s.messages || [])
+      .filter((m) => m?.excludedFromContext && visibleIds.has(m.parentId) && !s.messages.some((x) => x?.excludedFromContext && x.id === m.parentId))
+      .map((m) => ({
+        id: m.id,
+        parentId: m.parentId || null,
+        role: m.role,
+        preview: String(m.content || "").replace(/\s+/g, " ").slice(0, 100),
+        deletedAt: m.deletedAt || null,
+      }));
   }
 
   /** Branch meta for UI: for each message on path, sibling index. */
@@ -419,9 +601,80 @@ class SessionStore {
     session.fileChanges = [];
     // 清空后重置标题：后续消息可重新生成标题
     session.title = "新对话";
+    session.runStatus = "idle";
     session.updatedAt = Date.now();
     this.save();
     return session;
+  }
+
+  /**
+   * 压缩当前活动分支：用摘要消息 + 保留尾部消息重建线性路径。
+   * 其它分支会丢弃（压缩以当前分支为准）。
+   * @param {string} summaryText
+   * @param {Array} keepMsgs 原 path 上保留的消息（按时间顺序）
+   * @returns {{ session, beforeCount, afterCount, keptCount }}
+   */
+  compactActive(summaryText, keepMsgs = [], opts = {}) {
+    const session = (opts.sessionId && this.getById(opts.sessionId)) || this.getActive();
+    const beforeCount = Array.isArray(session.messages)
+      ? session.messages.length
+      : 0;
+    const pathBefore = getPathToLeaf(session, session.activeLeafId);
+    const pathCount = pathBefore.length;
+    const keepFileChanges = opts.keepFileChanges !== false;
+
+    const summary = String(summaryText || "").trim();
+    const keep = Array.isArray(keepMsgs) ? keepMsgs.filter(Boolean) : [];
+    const now = Date.now();
+    const next = [];
+
+    let parentId = null;
+    if (summary) {
+      const sumMsg = {
+        id: randomUUID(),
+        role: "assistant",
+        content:
+          "【上下文已压缩】以下是更早对话的摘要，细节以摘要为准；之后为保留的近期原文。\n\n" +
+          summary,
+        parentId: null,
+        createdAt: now,
+        compacted: true,
+      };
+      next.push(sumMsg);
+      parentId = sumMsg.id;
+    }
+
+    for (const m of keep) {
+      const msg = {
+        id: randomUUID(),
+        role: m.role,
+        content: m.content,
+        toolName: m.toolName,
+        toolCallId: m.toolCallId,
+        tool_calls: Array.isArray(m.tool_calls) ? m.tool_calls : undefined,
+        attachments: Array.isArray(m.attachments) ? m.attachments : undefined,
+        parentId,
+        createdAt: m.createdAt || now,
+        compactedFrom: m.id,
+      };
+      next.push(msg);
+      parentId = msg.id;
+    }
+
+    session.messages = next;
+    session.activeLeafId = parentId;
+    if (!keepFileChanges) session.fileChanges = [];
+    session.updatedAt = Date.now();
+    session.compactedAt = Date.now();
+    this.save();
+    return {
+      session,
+      beforeCount,
+      pathCount,
+      afterCount: next.length,
+      keptCount: keep.length,
+      summarized: !!summary,
+    };
   }
 
   /** 重命名会话。空/纯空白标题回退「新对话」。 */
@@ -488,6 +741,8 @@ function migrateSession(s) {
       id: s?.id || randomUUID(),
       title: s?.title || "新对话",
       mode: s?.mode || "agent",
+      workspaceRoot: String(s?.workspaceRoot || ""),
+      runStatus: inferRunStatus(s),
       messages: [],
       activeLeafId: null,
       fileChanges: Array.isArray(s?.fileChanges) ? s.fileChanges : [],
@@ -502,6 +757,8 @@ function migrateSession(s) {
   if (hasParent && s.activeLeafId) {
     return {
       ...s,
+      workspaceRoot: String(s.workspaceRoot || ""),
+      runStatus: inferRunStatus(s),
       messages: s.messages.map((m) => ({
         ...m,
         parentId: m.parentId === undefined ? null : m.parentId,
@@ -527,11 +784,27 @@ function migrateSession(s) {
   });
   return {
     ...s,
+    workspaceRoot: String(s.workspaceRoot || ""),
+    runStatus: inferRunStatus(s),
     messages,
     activeLeafId:
       s.activeLeafId || messages[messages.length - 1]?.id || null,
     fileChanges: Array.isArray(s.fileChanges) ? s.fileChanges : [],
   };
+}
+
+function inferRunStatus(s) {
+  const raw = normalizeRunStatus(s?.runStatus);
+  if (raw === "running") return "idle"; // 进程重启后不可能还在跑
+  if (raw !== "idle") return raw;
+  const pending = (s?.fileChanges || []).some((f) => f && !f.rejected);
+  return pending ? "review" : "idle";
+}
+
+function normalizeRunStatus(v) {
+  const s = String(v || "").toLowerCase();
+  if (s === "running" || s === "stopped" || s === "review") return s;
+  return "idle";
 }
 
 /**
@@ -587,4 +860,6 @@ module.exports = {
   deepestLeaf,
   migrateSession,
   makeSessionTitle,
+  normalizeRunStatus,
+  inferRunStatus,
 };

@@ -171,6 +171,7 @@ function classifyProviderError(errOrText) {
     hint = "触发限流。稍后再试，或换服务商/模型。";
     action = "models";
   } else if (
+    lower.includes("402") ||
     lower.includes("insufficient") ||
     lower.includes("quota") ||
     lower.includes("balance") ||

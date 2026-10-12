@@ -17,9 +17,16 @@ contextBridge.exposeInMainWorld("emsoder", {
   getState: () => ipcRenderer.invoke("app:get-state"),
   getConfig: () => ipcRenderer.invoke("config:get"),
   updateConfig: (patch) => ipcRenderer.invoke("config:update", patch),
+  getExecutionEnv: () => ipcRenderer.invoke("config:execution-env-get"),
+  updateExecutionEnv: (lines) => ipcRenderer.invoke("config:execution-env-update", { lines }),
+  listCredentials: () => ipcRenderer.invoke("credentials:list"),
+  setCredential: (payload) => ipcRenderer.invoke("credentials:set", payload || {}),
+  clearCredential: (payload) => ipcRenderer.invoke("credentials:clear", payload || {}),
   exportConfig: (opts) => ipcRenderer.invoke("config:export", opts || {}),
   importConfig: () => ipcRenderer.invoke("config:import"),
+  exportLogs: () => ipcRenderer.invoke("logger:export"),
   getProviderPresets: () => ipcRenderer.invoke("config:provider-presets"),
+  testImageGeneration: () => ipcRenderer.invoke("skills:image-gen-test"),
 
   saveDrafts: (drafts) => ipcRenderer.invoke("drafts:save", drafts),
   loadDrafts: () => ipcRenderer.invoke("drafts:load"),
@@ -32,9 +39,10 @@ contextBridge.exposeInMainWorld("emsoder", {
     ipcRenderer.invoke("providers:set-active", { providerId, model }),
   testProvider: (id) => ipcRenderer.invoke("providers:test", id),
   refreshModels: (id) => ipcRenderer.invoke("providers:refresh-models", id),
+  oauthLogin: (providerId) => ipcRenderer.invoke("providers:oauth-login", { providerId }),
 
-  openWorkspace: () => ipcRenderer.invoke("workspace:open"),
-  getWorkspace: () => ipcRenderer.invoke("workspace:get"),
+  openWorkspace: (opts) => ipcRenderer.invoke("workspace:open", opts || {}),
+  getWorkspace: (opts) => ipcRenderer.invoke("workspace:get", opts || {}),
   readDir: (p) => ipcRenderer.invoke("fs:read-dir", p),
   readFile: (p) => ipcRenderer.invoke("fs:read-file", p),
   writeFile: (filePath, content) =>
@@ -45,23 +53,29 @@ contextBridge.exposeInMainWorld("emsoder", {
   search: (opts) => ipcRenderer.invoke("fs:search", opts),
   listCodeFiles: (opts) => ipcRenderer.invoke("fs:list-code-files", opts),
   allowClose: () => ipcRenderer.invoke("app:allow-close"),
+  showMainWindow: () => ipcRenderer.invoke("app:show-main"),
 
   listSessions: () => ipcRenderer.invoke("session:list"),
   getSession: () => ipcRenderer.invoke("session:get"),
   newSession: () => ipcRenderer.invoke("session:new"),
   setActiveSession: (id) => ipcRenderer.invoke("session:set-active", id),
   clearSession: () => ipcRenderer.invoke("session:clear"),
+  compressSession: (opts) => ipcRenderer.invoke("session:compress", opts || {}),
   removeSession: (id) => ipcRenderer.invoke("session:remove", id),
   removeSessions: (ids) => ipcRenderer.invoke("session:remove-many", ids),
   renameSession: (id, title) => ipcRenderer.invoke("session:rename", { id, title }),
   branchEdit: (payload) => ipcRenderer.invoke("session:branch-edit", payload),
+  excludeContextMessage: (payload) => ipcRenderer.invoke("session:exclude-message", payload),
+  restoreContextMessage: (payload) => ipcRenderer.invoke("session:restore-message", payload),
+  deleteContextMessage: (payload) => ipcRenderer.invoke("session:delete-message", payload),
+  editAssistantContextMessage: (payload) => ipcRenderer.invoke("session:edit-assistant-message", payload),
   switchBranch: (messageId, direction) =>
     ipcRenderer.invoke("session:switch-branch", { messageId, direction }),
 
   sendAgent: (payload) => ipcRenderer.send("agent:send", payload),
-  stopAgent: () => ipcRenderer.invoke("agent:stop"),
-  isAgentRunning: () => ipcRenderer.invoke("agent:is-running"),
-  getAgentQueueStatus: () => ipcRenderer.invoke("agent:queue-status"),
+  stopAgent: (opts) => ipcRenderer.invoke("agent:stop", opts || {}),
+  isAgentRunning: (opts) => ipcRenderer.invoke("agent:is-running", opts || {}),
+  getAgentQueueStatus: (opts) => ipcRenderer.invoke("agent:queue-status", opts || {}),
   getAgentFileChanges: (sessionId) =>
     ipcRenderer.invoke("agent:file-changes", { sessionId }),
   getAgentFileChangeDiff: (filePath, sessionId) =>
@@ -209,6 +223,11 @@ contextBridge.exposeInMainWorld("emsoder", {
     return () => ipcRenderer.removeListener("debug:event", listener);
   },
 
+  onConfigChanged: (cb) => {
+    const listener = (_e, data) => cb(data);
+    ipcRenderer.on("config:changed", listener);
+    return () => ipcRenderer.removeListener("config:changed", listener);
+  },
   onAgentEvent: (cb) => {
     const listener = (_e, data) => cb(data);
     ipcRenderer.on("agent:event", listener);

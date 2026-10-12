@@ -2,6 +2,28 @@ const { getActiveModel, getActiveProvider } = require("../core/config");
 const { streamOpenAIChat, chatOpenAIOnce } = require("./openai");
 const { streamAnthropicChat, chatAnthropicOnce } = require("./anthropic");
 const { fetchWithTimeout } = require("./httpUtil");
+const { getOAuthBearerToken } = require("../core/oauth");
+const {
+  POLLINATIONS_PROVIDER,
+  isPollinationsProvider,
+  streamPollinationsChat,
+  chatPollinationsOnce,
+  listPollinationsModels,
+} = require("./pollinations");
+
+function keylessFallback(cfg, req, primary) {
+  // Test/completion paths that explicitly select a provider must not silently switch.
+  if (cfg.keylessFallbackEnabled !== true || req.provider || req.allowFallback === false || isPollinationsProvider(primary)) return null;
+  const p = (cfg.providers || []).find((p) => p.id === POLLINATIONS_PROVIDER.id);
+  if (!p || p.enabled === false || !isPollinationsProvider(p) || new URL(p.baseUrl).hostname !== "text.pollinations.ai") return null;
+  return { ...POLLINATIONS_PROVIDER, ...p, apiKey: "", headers: undefined, oauth: undefined };
+}
+
+async function* dispatchStream(provider, full) {
+  if (isPollinationsProvider(provider)) yield* streamPollinationsChat(provider, full);
+  else if (provider.type === "anthropic") yield* streamAnthropicChat(provider, full);
+  else yield* streamOpenAIChat(provider, full);
+}
 
 function resolveProvider(cfg, provider) {
   const p = provider || getActiveProvider(cfg);
@@ -13,6 +35,18 @@ function resolveProvider(cfg, provider) {
   return p;
 }
 
+function normalizeReasoningEffort(v) {
+  const s = String(v || "").toLowerCase().trim();
+  if (s === "off" || s === "none" || s === "关闭" || s === "关闭思考") return "off";
+  if (s === "low" || s === "medium" || s === "high" || s === "ultra") return s;
+  // Chinese aliases
+  if (s === "低") return "low";
+  if (s === "中") return "medium";
+  if (s === "高") return "high";
+  if (s === "超高") return "ultra";
+  return "medium";
+}
+
 async function* streamChat(cfg, req) {
   const provider = resolveProvider(cfg, req.provider);
   const model = req.model || getActiveModel(cfg);
@@ -20,13 +54,55 @@ async function* streamChat(cfg, req) {
     ...req,
     model,
     temperature: req.temperature ?? cfg.temperature ?? 0.2,
-    maxTokens: req.maxTokens ?? cfg.maxTokens ?? 8192,
+    // 0 / 空 = 自动（不发 max_tokens，让服务端用模型默认上限）
+    maxTokens: req.maxTokens ?? cfg.maxTokens ?? 0,
+    reasoningEffort: normalizeReasoningEffort(
+      req.reasoningEffort ?? cfg.reasoningEffort
+    ),
   };
-  if (provider.type === "anthropic") {
-    yield* streamAnthropicChat(provider, full);
-  } else {
-    yield* streamOpenAIChat(provider, full);
+  // The Pollinations lane only uses its own explicit key, never OAuth credentials.
+  if (isPollinationsProvider(provider)) {
+    yield* streamPollinationsChat(provider, full);
+    return;
   }
+  // Pi OAuth provider：服务商配置了 OAuth 时用 Bearer token（自动刷新）覆盖 apiKey
+  try {
+    const oauthToken = await getOAuthBearerToken(cfg, provider.id);
+    if (typeof oauthToken === "string" && oauthToken) full.oauthBearerToken = oauthToken;
+  } catch { /* OAuth 不可用时回退 apiKey */ }
+  const fallback = keylessFallback(cfg, req, provider);
+  let committed = false;
+  let primaryError = null;
+  const pending = [];
+  try {
+    for await (const chunk of dispatchStream(provider, full)) {
+      if (chunk.type === "error") { primaryError = chunk; break; }
+      if (["text", "reasoning", "tool_call"].includes(chunk.type)) committed = true;
+      if (!committed && fallback) pending.push(chunk);
+      else {
+        for (const event of pending.splice(0)) yield event;
+        yield chunk;
+      }
+    }
+  } catch (error) {
+    primaryError = { type: "error", error: String(error?.message || error) };
+  }
+  if (!primaryError && !committed && fallback) {
+    primaryError = { type: "error", error: "Empty response from primary provider" };
+  }
+  if (!primaryError) {
+    for (const event of pending) yield event;
+    return;
+  }
+  // Never replay after output/tools, on user stop, or to bypass quota/auth restrictions.
+  const blocked = [401, 402, 403, 429].includes(Number(primaryError.status)) || /\b(?:401|402|403|429)\b|quota|credits|billing|balance|rate.?limit|too many|invalid.*key|unauthorized|forbidden|额度|欠费|限流|无权限/i.test(`${primaryError.errorCode || ""} ${primaryError.error || ""}`);
+  const unavailable = /\b5\d\d\b|network|fetch failed|econn|enotfound|socket|timeout|超时|empty response|empty.*body|不可达/i.test(primaryError.error || "");
+  if (!fallback || !unavailable || committed || req.signal?.aborted || /abort|已停止/i.test(primaryError.error || "") || blocked) {
+    yield primaryError;
+    return;
+  }
+  yield { type: "status", status: `主服务商不可用，正在切换 Pollinations 无密钥（已开启自动兜底）` };
+  yield* streamPollinationsChat(fallback, { ...full, model: "openai", oauthBearerToken: undefined });
 }
 
 async function chatOnce(cfg, req) {
@@ -36,8 +112,20 @@ async function chatOnce(cfg, req) {
     ...req,
     model,
     temperature: req.temperature ?? cfg.temperature ?? 0.2,
-    maxTokens: req.maxTokens ?? cfg.maxTokens ?? 8192,
+    maxTokens: req.maxTokens ?? cfg.maxTokens ?? 0,
+    reasoningEffort: normalizeReasoningEffort(
+      req.reasoningEffort ?? cfg.reasoningEffort
+    ),
   };
+  if (isPollinationsProvider(provider)) {
+    const result = await chatPollinationsOnce(provider, full);
+    if (result?.type === "error") throw Object.assign(new Error(result.error), { status: result.status, errorCode: result.errorCode });
+    return result;
+  }
+  try {
+    const oauthToken = await getOAuthBearerToken(cfg, provider.id);
+    if (typeof oauthToken === "string" && oauthToken) full.oauthBearerToken = oauthToken;
+  } catch { /* OAuth 不可用时回退 apiKey */ }
   if (provider.type === "anthropic") {
     return chatAnthropicOnce(provider, full);
   }
@@ -89,7 +177,7 @@ async function testProvider(cfg, provider, model) {
       const base = String(provider.baseUrl || "").replace(/\/+$/, "");
       const headers = { ...(provider.headers || {}) };
       if (provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
-      if (provider.type !== "anthropic") {
+      if (provider.type !== "anthropic" && !isPollinationsProvider(provider)) {
         const res = await fetchWithTimeout(`${base}/models`, { headers }, 6000);
         // 必须完整消费/取消 body，但不能二次读取
         try {
@@ -153,6 +241,13 @@ async function testProvider(cfg, provider, model) {
  */
 async function listRemoteModels(provider) {
   if (!provider) return [];
+  if (isPollinationsProvider(provider)) {
+    const result = await listPollinationsModels({ ...provider, timeoutMs: 12000, maxRetries: 0 });
+    if (result?.type === "error") {
+      throw Object.assign(new Error(result.error), { status: result.status, errorCode: result.errorCode, fallbackModels: [...(provider.models || [])] });
+    }
+    return result;
+  }
   if (provider.type === "anthropic") return (provider.models || []).slice();
 
   const base = String(provider.baseUrl || "").replace(/\/+$/, "");
@@ -232,4 +327,5 @@ module.exports = {
   testProvider,
   listRemoteModels,
   withHardTimeout,
+  normalizeReasoningEffort,
 };

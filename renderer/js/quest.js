@@ -19,6 +19,15 @@
     cancelled: "已取消",
   };
 
+  function escapeHtml(s) {
+    return String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
   function $(id) {
     return document.getElementById(id);
   }
@@ -92,7 +101,7 @@
           <div class="g"></div>
           <div class="r"></div>
           <div class="meta">
-            <span class="quest-badge ${q.status}">${STATUS_LABEL[q.status] || q.status}</span>
+            <span class="quest-badge ${q.status}">${escapeHtml(STATUS_LABEL[q.status] || q.status)}</span>
             <span>${q.mode === "experts" ? "Experts" : "Agent"}</span>
             <span>${q.progress || 0}%</span>
             <span>${q.changeCount || 0} 文件</span>
@@ -214,54 +223,26 @@
   }
 
   function setShellMode(mode) {
+    // Quest 壳已下线。任何 mode 都落回 IDE，永不加 quest-shell。
+    void mode;
     const app = $("app");
     const main = $("mainLayout");
     if (!app || !main) return;
-    if (mode === "quest") {
-      app.classList.add("quest-shell");
-      main.classList.add("quest-mode");
-      main.classList.remove("chat-collapsed");
-      document
-        .querySelectorAll(".mode-switch button")
-        .forEach((b) =>
-          b.classList.toggle("active", b.dataset.mode === "quest")
-        );
-      document
-        .querySelectorAll(".act-btn[data-view]")
-        .forEach((b) => b.classList.remove("active"));
-      document
-        .querySelector('.act-btn[data-view="quest"]')
-        ?.classList.add("active");
-    } else {
-      app.classList.remove("quest-shell");
-      main.classList.remove("quest-mode");
-      document
-        .querySelectorAll(".mode-switch button")
-        .forEach((b) =>
-          b.classList.toggle("active", b.dataset.mode === "ide")
-        );
-      // IDE：活动栏高亮「会话」（置顶入口）
-      document
-        .querySelectorAll(".act-btn[data-view]")
-        .forEach((b) => b.classList.remove("active"));
-      document
-        .querySelector('.act-btn[data-view="sessions"]')
-        ?.classList.add("active");
-      // IDE: keep right editor preference (default hidden)
-      try {
-        const pref = localStorage.getItem("emsoder.ideEditorVisible");
-        main.classList.toggle("editor-collapsed", pref !== "1");
-      } catch {
-        main.classList.add("editor-collapsed");
-      }
-      try {
-        window.EmsoderApp?.syncEditorToggleUI?.();
-      } catch {
-        /* ignore */
-      }
+    app.classList.remove("quest-shell");
+    main.classList.remove("quest-mode");
+    try {
+      localStorage.setItem("emsoder.uiMode", "ide");
+    } catch {
+      /* ignore */
     }
     try {
-      localStorage.setItem("emsoder.uiMode", mode);
+      const pref = localStorage.getItem("emsoder.ideEditorVisible");
+      main.classList.toggle("editor-collapsed", pref !== "1");
+    } catch {
+      main.classList.add("editor-collapsed");
+    }
+    try {
+      window.EmsoderApp?.syncEditorToggleUI?.();
     } catch {
       /* ignore */
     }
@@ -269,12 +250,8 @@
   }
 
   function enterQuestMode(on) {
-    if (on) {
-      setShellMode("quest");
-      renderSidePanel();
-    } else {
-      setShellMode("ide");
-    }
+    void on;
+    setShellMode("ide");
   }
 
   function setRightTab(name) {
@@ -346,7 +323,7 @@
       pathEl.onclick = open;
       row.querySelector('[data-a="open"]').onclick = open;
       row.querySelector('[data-a="reject"]').onclick = async () => {
-        if (!confirm("回滚该文件到任务开始前的内容？")) return;
+        if (!(await EmsoderDom.showConfirm("回滚该文件到任务开始前的内容？"))) return;
         try {
           await emsoder.questRejectChange(q.id, f.path);
           state.quest = await emsoder.questGet(q.id);
@@ -500,7 +477,7 @@
     state.quest = q;
     await refreshBoard();
     renderConsole();
-    enterQuestMode(true);
+    toast("Quest 壳已下线，用 Chat 说话改文件");
     if (startNow) await startActive();
   }
 
@@ -633,7 +610,8 @@
         return;
       }
       if (ev.type === "delta" && ev.text) {
-        state.liveDelta += ev.text;
+        // 截断累积缓冲：长任务输出不会无限占内存（显示只用末尾 3000 字符）
+        state.liveDelta = (state.liveDelta + ev.text).slice(-10000);
         // rAF throttle — Quest stream can be very chatty
         if (!state._deltaRaf) {
           state._deltaRaf = requestAnimationFrame(() => {
@@ -701,25 +679,10 @@
   }
 
   function openQuestView() {
-    enterQuestMode(true);
-    renderSidePanel();
-    if (state.activeId) {
-      emsoder.questGet(state.activeId).then((q) => {
-        state.quest = q;
-        renderConsole();
-      });
-    } else {
-      renderConsole();
-    }
+    setShellMode("ide");
   }
 
   function bootDefault() {
-    // 打开 EMSoder 时默认始终进入 IDE（可手动再切 Quest）
-    try {
-      localStorage.setItem("emsoder.uiMode", "ide");
-    } catch {
-      /* ignore */
-    }
     setShellMode("ide");
   }
 

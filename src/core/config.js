@@ -1,8 +1,12 @@
 const fs = require("fs");
 const path = require("path");
 const { app } = require("electron");
+const { executionEnv } = require("../tools/skillRuntime");
+const { sealConfig, unsealConfig } = require("./secretStore");
+const { POLLINATIONS_PROVIDER } = require("../providers/pollinations");
 
 const DEFAULT_PROVIDERS = [
+  structuredClone(POLLINATIONS_PROVIDER),
   {
     id: "ollama",
     name: "Ollama (Local Free)",
@@ -89,6 +93,7 @@ const DEFAULT_PROVIDERS = [
  * Kept here alongside DEFAULT_PROVIDERS so there is one source of truth.
  */
 const PROVIDER_PRESETS = {
+  pollinations: { ...POLLINATIONS_PROVIDER, models: "openai" },
   ollama: {
     id: "ollama", name: "Ollama (Local Free)", type: "openai",
     baseUrl: "http://127.0.0.1:11434/v1", apiKey: "ollama",
@@ -147,31 +152,54 @@ const PROVIDER_PRESETS = {
 };
 
 const DEFAULT_CONFIG = {
-  activeProviderId: "ollama",
-  activeModel: "qwen2.5-coder:7b",
+  activeProviderId: "pollinations-keyless",
+  activeModel: "openai",
   providers: DEFAULT_PROVIDERS,
+  /** Opt-in only: failures may send the same conversation to Pollinations. */
+  keylessFallbackEnabled: false,
+  pollinationsProviderMigrated: true,
+  /** Agent runtime backend: pi (default sidecar) | emsoder (legacy fallback) */
+  agentBackend: "pi",
   agentMode: true,
-  autoRunTools: false,
   /**
-   * 自识别授权：文件读写、安全终端等操作自动放行，不弹确认；
-   * 仅高危险终端命令（非 git/npm/ls 等白名单）仍询问。
-   * autoRunTools 可以额外跳过危险命令。
+   * 权限模式：
+   * confirm       变更前确认 — 改文件前先问
+   * auto_edit     自动编辑   — 自动改文件
+   * plan          计划模式   — 编辑前先出计划，不直接改
+   * full          高危才询问 — 自动改文件 + 安全命令自动，仅高危仍问
+   * unrestricted  完全授权   — 不问用户，文件和终端都自动执行
    */
-  autoApproveSafe: true,
+  permissionMode: "auto_edit",
   /** Chat 默认折叠工具调用与思考过程，只突出最终回答 */
   collapseProcess: true,
   terminalRunMode: "askEveryTime",
   commandDenyList:
     "rm -rf,format,mkfs,dd if=,shutdown,reboot,del /s,Remove-Item -Recurse",
-  maxTokens: 8192,
+  /** User variables for terminal / run_terminal / skill child processes only. */
+  executionEnv: {},
+  maxTokens: 0,
   temperature: 0.2,
   /**
-   * Agent 单次对话内「模型回复 ↔ 工具」循环上限。
-   * 过小会中途停住，用户只能再发「继续」。
+   * 模型思考强度：off / low / medium / high / ultra（关闭/低/中/高/超高）。
+   * off 不发送 reasoning_effort、reasoning 或 thinking 参数；其余档位按 Provider 映射。
+   * 不支持的模型/网关会忽略该字段。
    */
-  agentMaxRounds: 32,
-  /** 触达上限或模型提前收口时，自动塞「继续」再跑的次数（0=关） */
-  agentAutoContinue: 2,
+  reasoningEffort: "medium",
+  /**
+   * 运行模式（Pi plan/goal）：auto = 直接执行；plan = 先出计划等用户批准再执行；
+   * goal = 目标模式，自动续跑直到完成。旧后端 auto 行为不受影响。
+   */
+  runMode: "auto",
+  /**
+   * Agent 单次对话内「模型回复 ↔ 工具」循环上限。
+   * 0 / 不填 = 不限制，直到模型不再调工具或用户点停止。
+   */
+  agentMaxRounds: 0,
+  /**
+   * 模型提前收口时自动再跑的次数。
+   * -1 / 不填 = 不限制；0 = 关。
+   */
+  agentAutoContinue: -1,
   systemPrompt: "",
   responseLanguage: "zh-cn",
   theme: "sky-dark",
@@ -204,6 +232,32 @@ const DEFAULT_CONFIG = {
   memoriesMaxCount: 500,
   /** MCP servers (stdio): { id, name, command, args: [], env: {}, enabled } */
   mcpServers: [],
+  /** 上下文窗口容量覆盖：>0 时对所有模型强制该 token 上限；0 = 按模型自动判断 */
+  contextWindow: 0,
+  /** 按模型名指定上下文窗口：{ "模型名或片段": token数 } */
+  modelContextWindows: {},
+  /** 上下文占用达到该百分比时任务中自动压缩（40–99）；见 compress.js */
+  autoCompressAt: 80,
+  /** 完成提示音：任务做完（发送键恢复可点）时响一声 */
+  soundEnabled: true,
+  /** 完成提示音音量 0–1 */
+  soundVolume: 1.0,
+  /** 桌面悬浮球：常驻置顶显示任务状态 */
+  floatingBallEnabled: false,
+  /** 图片搜索来源：pexels | unsplash */
+  imageProvider: "pexels",
+  /** Pexels API Key（免费申请：https://www.pexels.com/api/） */
+  pexelsApiKey: "",
+  /** Unsplash Access Key（免费申请：https://unsplash.com/developers） */
+  unsplashApiKey: "",
+  /** ppt-master AI 图片生成后端 */
+  imageGenBackend: "modelscope",
+  /** 可选覆盖后端默认模型 */
+  imageGenModel: "",
+  /** OpenAI-compatible / 自建图片后端的可选 Base URL */
+  imageGenBaseUrl: "",
+  /** AI 图片生成 API Key，仅本机用户配置保存，不进入公开配置 */
+  imageGenApiKey: "",
 };
 
 function configPath() {
@@ -233,15 +287,16 @@ function sanitizeConfig(raw) {
   }
   // Providers: validate each entry has at least id + baseUrl
   out.providers =
-    Array.isArray(raw.providers) && raw.providers.length
+    Array.isArray(raw.providers)
       ? raw.providers.filter(
           (p) => p && typeof p.id === "string" && typeof p.baseUrl === "string"
         )
       : [];
-  if (!out.providers.length) out.providers = DEFAULT_PROVIDERS;
+  if (!Array.isArray(raw.providers)) out.providers = structuredClone(DEFAULT_PROVIDERS);
   // Other arrays
   out.skillsDirs = Array.isArray(raw.skillsDirs) ? raw.skillsDirs.filter((s) => typeof s === "string") : [];
   out.skillsDisabled = Array.isArray(raw.skillsDisabled) ? raw.skillsDisabled.filter((s) => typeof s === "string") : [];
+  out.executionEnv = executionEnv({ executionEnv: raw.executionEnv });
   // MCP servers: keep entries with id + (command or url); infer type like zcode
   out.mcpServers = Array.isArray(raw.mcpServers)
     ? raw.mcpServers
@@ -291,7 +346,33 @@ function loadConfig() {
     const p = configPath();
     if (fs.existsSync(p)) {
       const raw = JSON.parse(fs.readFileSync(p, "utf8"));
-      return { ...DEFAULT_CONFIG, ...sanitizeConfig(raw) };
+      // 敏感字段静态解密（旧明文配置原样返回，下次保存自动加密）
+      const data = unsealConfig(raw);
+      const cfg = { ...DEFAULT_CONFIG, ...sanitizeConfig(data) };
+      // Add the built-in lane once without replacing the user's active provider.
+      if (!data.pollinationsProviderMigrated) {
+        if (!cfg.providers.some((p) => p.id === POLLINATIONS_PROVIDER.id)) {
+          cfg.providers = [...cfg.providers, structuredClone(POLLINATIONS_PROVIDER)];
+        }
+        cfg.pollinationsProviderMigrated = true;
+        saveConfig(cfg);
+      }
+      // 一次性迁移：旧配置 autoRunTools/autoApproveSafe -> permissionMode
+      if (!cfg.permissionMode || cfg.permissionMode === "auto_edit") {
+        if (raw.autoRunTools === true) cfg.permissionMode = "full";
+        else if (raw.autoApproveSafe === true) cfg.permissionMode = "auto_edit";
+        else if (raw.autoApproveSafe === false && !raw.permissionMode) cfg.permissionMode = "confirm";
+      }
+      // 旧默认 32/2/48/5 对长任务仍会中途停：未手动改成 0/-1 的配置改为不限制
+      const rounds = Number(raw.agentMaxRounds);
+      if (raw.agentMaxRounds == null || rounds === 32 || rounds === 48) {
+        cfg.agentMaxRounds = 0;
+      }
+      const cont = Number(raw.agentAutoContinue);
+      if (raw.agentAutoContinue == null || cont === 2 || cont === 5) {
+        cfg.agentAutoContinue = -1;
+      }
+      return cfg;
     }
   } catch (e) {
     console.error("loadConfig", e);
@@ -302,7 +383,7 @@ function loadConfig() {
 function saveConfig(cfg) {
   const p = configPath();
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(cfg, null, 2), "utf8");
+  fs.writeFileSync(p, JSON.stringify(sealConfig(cfg), null, 2), "utf8");
 }
 
 function getProviders(cfg) {
@@ -316,6 +397,11 @@ function getProviders(cfg) {
     enabled: p.enabled !== false,
     headers: p.headers,
     chatPath: p.chatPath,
+    keyless: p.keyless === true,
+    timeoutMs: p.timeoutMs,
+    oauth: p.oauth && typeof p.oauth === "object" ? p.oauth : undefined,
+    oauthConfigured: !!(p.oauth?.clientId && p.oauth?.authorizeUrl && p.oauth?.tokenUrl),
+    oauthConnected: !!(p.oauthTokens?.accessToken),
   }));
 }
 

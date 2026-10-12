@@ -1,0 +1,38 @@
+[package]
+name = "emsoder"
+version = "2.6.0"
+description = "EMSoder — 你的模型，你的机器"
+authors = ["EMSoder"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "emsoder_lib"
+# staticlib/cdylib are for the mobile targets the Tauri template supports; rlib
+# is what src/main.rs links against. Keeping all three matches the template.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `devtools` is explicit rather than debug-only: the Electron build always had
+# DevTools available (Ctrl+Shift+I, plus `--dev` auto-open), and dropping it in
+# release builds would be a capability regression. Auto-open stays debug-only
+# (see src/lib.rs).
+tauri = { version = "2", features = ["devtools"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+# oneshot is the only tokio piece needed: the rpc command awaits the host's
+# reply on an async runtime thread instead of blocking the main thread.
+tokio = { version = "1", features = ["sync"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

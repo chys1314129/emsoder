@@ -287,6 +287,10 @@ const SKILL_CN = {
     desc: "PPT 生成器，生成 PowerPoint 演示文稿。",
     triggers: ["生成 ppt", "幻灯片", "powerpoint", "演示文稿"],
   },
+  "ppt-master": {
+    desc: "精美 PPT 大师（预装）：逐页 AI 设计 SVG 版式再导出 PPTX，视觉效果远超模板。做「精美/高质量/好看的 PPT/演示/汇报/路演」必须用它。需要配图片生成后端 API Key。"
+    triggers: ["精美 ppt", "好看的 ppt", "高质量 ppt", "漂亮的 ppt", "演示文稿", "路演", "汇报 ppt", "设计 ppt", "ppt 大师"],
+  },
   "gif-sticker-maker": {
     desc: "GIF 贴纸制作，生成动态贴纸。",
     triggers: ["gif", "贴纸", "表情包", "动图"],

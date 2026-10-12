@@ -219,6 +219,69 @@ async function main() {
   slowClient.stop();
   slowServer.close();
 
+  // --- SSE 流：结果前混入 progress 通知 + ping，只取 id 匹配的响应 ---
+  const sseServer = http.createServer((req, res) => {
+    if (req.method !== "POST") {
+      res.writeHead(405);
+      res.end();
+      return;
+    }
+    let body = "";
+    req.on("data", (d) => (body += d));
+    req.on("end", () => {
+      let msg;
+      try {
+        msg = JSON.parse(body);
+      } catch {
+        res.writeHead(400);
+        res.end();
+        return;
+      }
+      if (msg.method === "initialize") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "sse-mock", version: "1.0.0" } } }));
+        return;
+      }
+      if (msg.method === "tools/list") {
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        // progress 通知（无 id）→ ping 通知 → 最终响应（多行 data + 末尾补一个多余事件）
+        const events = [
+          { event: "message", data: JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: { progress: 0.5 } }) },
+          { event: "message", data: JSON.stringify({ jsonrpc: "2.0", method: "notifications/message", params: { level: "info" } }) },
+          { event: "message", data: "event: ping\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"ping\"}" },
+          { event: "message", data: JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "sse_tool", description: "SSE tool", inputSchema: { type: "object", properties: {} } }] } }) },
+          // 结尾再来一个无关通知（旧实现会误取这一行）
+          { event: "message", data: JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: { progress: 1 } }) },
+        ];
+        let body2 = "";
+        for (const ev of events) {
+          body2 += `event: ${ev.event}\ndata: ${ev.data}\n\n`;
+        }
+        res.end(body2);
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.end(`data: ${JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text: "sse-ok" }] } })}\n\n`);
+    });
+  });
+  await new Promise((r) => sseServer.listen(0, "127.0.0.1", r));
+  const ssePort = sseServer.address().port;
+  const sseClient = new McpHttpClient(
+    { id: "sse", name: "SSE", type: "http", url: `http://127.0.0.1:${ssePort}/mcp`, timeoutMs: 3000 },
+    {}
+  );
+  await sseClient.start();
+  assert(sseClient.status === "running", "sse client should run");
+  const sseTools = await sseClient.refreshTools();
+  assert(sseTools.length === 1 && sseTools[0].name === "sse_tool", "sse tools/list picks id-matched response");
+  const sseCall = await sseClient.callTool("sse_tool", {});
+  assert(sseCall.ok && sseCall.content === "sse-ok", "sse tools/call");
+  sseClient.stop();
+  assert(sseClient.status === "stopped", "sse stop");
+  sseServer.close();
+  slowClient.stop();
+  slowServer.close();
+
   // manager with http server config
   const httpManager = new McpManager({});
   httpManager.reload({

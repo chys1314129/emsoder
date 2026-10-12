@@ -16,11 +16,40 @@
     return String(p || "").split(/[/\\]/).pop() || "";
   }
 
-  function toast(text, isError = false) {
-    // Prefer app-owned toast if present
-    if (global.EmsoderApp?.toast && global.EmsoderApp.toast !== toast) {
-      return global.EmsoderApp.toast(text, isError);
+  function playDoneChime(volume = 1) {
+    try {
+      // 权威静音：全局声音关闭时任何调用点都直接不发（AudioContext 不理会
+      // webContents.setAudioMuted，必须在源头拦截）。
+      const cfg = window.EmsoderState?.state?.config;
+      if (cfg && cfg.soundEnabled === false) return;
+      const vol = Math.max(0, Math.min(1, Number(volume)));
+      if (vol <= 0) return;
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = playDoneChime._ctx || (playDoneChime._ctx = new Ctx());
+      if (ctx.state === "suspended") ctx.resume();
+      const now = ctx.currentTime;
+      const beep = (t, freq, dur) => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = "sine";
+        o.frequency.setValueAtTime(freq, t);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), t + 0.015);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        o.connect(g);
+        g.connect(ctx.destination);
+        o.start(t);
+        o.stop(t + dur + 0.02);
+      };
+      beep(now, 880, 0.11);
+      beep(now + 0.11, 1175, 0.16);
+    } catch {
+      /* ignore */
     }
+  }
+
+  function toast(text, isError = false) {
     let el = document.getElementById("toast");
     if (!el) {
       el = document.createElement("div");
@@ -174,11 +203,66 @@
     });
   }
 
+  /**
+   * Styled async text/password prompt. Unlike window.prompt(), this remains
+   * visible and predictable in Electron desktop windows.
+   * Returns input text, or null on cancel/escape/backdrop.
+   */
+  function showPrompt({ title = "输入内容", message = "", value = "", type = "text", placeholder = "", confirmText = "保存" } = {}) {
+    return new Promise((resolve) => {
+      const modal = $("modalPrompt");
+      const titleEl = $("modalPromptTitle");
+      const msgEl = $("modalPromptMsg");
+      const input = $("modalPromptInput");
+      const okBtn = $("modalPromptOk");
+      const cancelBtn = $("modalPromptCancel");
+      const closeBtn = modal?.querySelector('[data-close="modalPrompt"]');
+      if (!modal || !titleEl || !msgEl || !input || !okBtn || !cancelBtn) {
+        toast("输入窗口未就绪，请重新打开环境变量面板", true);
+        resolve(null);
+        return;
+      }
+      titleEl.textContent = title;
+      msgEl.textContent = message;
+      input.type = type === "password" ? "password" : "text";
+      input.value = String(value ?? "");
+      input.placeholder = placeholder;
+      okBtn.textContent = confirmText;
+      openModal("modalPrompt");
+      let settled = false;
+      function cleanup(result) {
+        if (settled) return;
+        settled = true;
+        closeModal("modalPrompt");
+        okBtn.removeEventListener("click", onOk);
+        cancelBtn.removeEventListener("click", onCancel);
+        closeBtn?.removeEventListener("click", onCancel);
+        modal.removeEventListener("mousedown", onBackdrop);
+        document.removeEventListener("keydown", onKey, true);
+        resolve(result);
+      }
+      function onOk() { cleanup(input.value); }
+      function onCancel() { cleanup(null); }
+      function onBackdrop(event) { if (event.target === modal) cleanup(null); }
+      function onKey(event) {
+        if (event.key === "Escape") { event.preventDefault(); cleanup(null); }
+        else if (event.key === "Enter") { event.preventDefault(); cleanup(input.value); }
+      }
+      okBtn.addEventListener("click", onOk);
+      cancelBtn.addEventListener("click", onCancel);
+      closeBtn?.addEventListener("click", onCancel);
+      modal.addEventListener("mousedown", onBackdrop);
+      document.addEventListener("keydown", onKey, true);
+      setTimeout(() => { input.focus(); input.select(); }, 0);
+    });
+  }
+
   global.EmsoderDom = {
     $,
     escapeHtml,
     basename,
     toast,
+    playDoneChime,
     openModal,
     closeModal,
     emptyState,
@@ -187,5 +271,6 @@
     hideCtxMenu,
     copyText,
     showConfirm,
+    showPrompt,
   };
 })(typeof window !== "undefined" ? window : globalThis);
