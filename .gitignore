@@ -23,6 +23,37 @@ logo-*.html
 # pack artifacts
 模型说明.txt
 
+# Tauri build output
+src-tauri/target/
+src-tauri/gen/
+
+# Generated: scripts/build-host.js -> packaged Node host
+resources/runtime/
+
+# Generated: scripts/vendor-assets.js -> monaco + xterm for the Tauri webview
+renderer/vendor/
+
 # Secrets / API keys (never commit)
 *.env
 .env.local
+.env
+.env.*
+emsoder-config*.json
+emsoder-sessions*.json
+emsoder-memories*.json
+Local State
+*.pfx
+*.p12
+
+# Generated CI runtime, never copy a personal installation into the repository
+resources/skill-runtime/
+resources/agent-runtime/
+resources/bundled-skills/
+release-assets/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+dist-envfix/
+dist[0-9]*/

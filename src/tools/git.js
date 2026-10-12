@@ -135,9 +135,11 @@ async function commit(root, message) {
 }
 
 async function getLog(root, limit = 20) {
+  // 限制为数字，防止渲染层传入任意字符串注入 git 参数
+  const n = Math.max(1, Math.min(1000, Number(limit) || 20));
   const r = await git(root, [
     "log",
-    `-n${limit}`,
+    `-n${n}`,
     "--pretty=format:%h|%an|%ar|%s",
   ]);
   if (!r.ok) return { ok: false, commits: [], error: r.error || r.stderr };

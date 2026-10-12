@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "EMSoder 主窗口与悬浮球。业务命令全部经由应用自身的 rpc/rpc_listen 转发给 Node 宿主，所以这里只需要核心权限；start-dragging 供标题栏与悬浮球的 data-tauri-drag-region 使用。",
+  "windows": ["main", "ball"],
+  "permissions": ["core:default", "core:window:allow-start-dragging"]
+}

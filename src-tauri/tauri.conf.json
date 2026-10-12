@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "EMSoder",
+  "version": "2.8.0",
+  "identifier": "com.emsoder.desktop",
+  "build": {
+    "frontendDist": "../renderer"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; worker-src 'self' blob:; object-src 'none'",
+      "dangerousDisableAssetCspModification": true
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon-256.png",
+      "icons/icon-128.png",
+      "icons/icon-32.png"
+    ],
+    "resources": {
+      "../resources/runtime": "runtime",
+      "../resources/agent-runtime": "agent-runtime",
+      "../resources/core-skills": "core-skills",
+      "../resources/bundled-skills": "bundled-skills",
+      "../resources/skill-runtime": "skill-runtime",
+      "../resources/icon.png": "icon.png"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "compression": "lzma"
+      }
+    }
+  }
+}

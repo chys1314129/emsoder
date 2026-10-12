@@ -15,6 +15,12 @@ const {
   loadSkillCatalog,
   formatSkillsForPrompt,
 } = require("../tools/skills");
+const {
+  parseMutatingPath,
+  resolveUnder,
+  looksLikeNeedsContinue,
+  rollbackFileRow,
+} = require("./fileChanges");
 
 /**
  * Resolve third-party provider for a Quest (per-quest override, then global active).
@@ -43,7 +49,7 @@ function resolveQuestModel(cfg, quest, provider) {
 }
 
 /**
- * Goal-driven Quest runner (Qoder Quest–style, local + free custom models).
+ * Goal-driven Quest runner. Local. User brings the model.
  * Phases: plan -> execute (agent or experts) -> ready for review
  */
 class QuestRunner {
@@ -110,7 +116,9 @@ class QuestRunner {
       startedAt: Date.now(),
       finishedAt: null,
       steps: [],
-      fileChanges: quest.fileChanges?.length ? quest.fileChanges : [],
+      // 每次运行重置变更集：撤销只回滚到本次运行之前，
+      // 避免复用上次运行的过期 before 快照
+      fileChanges: [],
     });
     emit("status", { status: "running", progress: 5 });
 
@@ -130,9 +138,9 @@ class QuestRunner {
       } catch {
         /* ignore */
       }
-      // stash on events bridges via local closure for tool loop
-      this._questSkillCatalog = skillCatalog;
-      this._questSkillsText = skillsText;
+      // per-quest 上下文：并发 Quest 互不污染技能目录/记忆注入
+      this._runCtx = this._runCtx || new Map();
+      this._runCtx.set(questId, { skillCatalog, skillsText, memoryText: "" });
 
       // ---- Long-term memory: 按目标检索相关记忆注入系统提示 ----
       let memoryText = "";
@@ -146,7 +154,8 @@ class QuestRunner {
           }
         } catch { /* ignore memory retrieval errors - never block the quest */ }
       }
-      this._questMemoryText = memoryText;
+      const ctx = this._runCtx.get(questId);
+      if (ctx) ctx.memoryText = memoryText;
 
       // ---- Phase 1: Plan ----
       const planStep = this.store.appendStep(questId, {
@@ -258,6 +267,7 @@ class QuestRunner {
       }
     } finally {
       this.aborts.delete(questId);
+      if (this._runCtx) this._runCtx.delete(questId);
     }
   }
 
@@ -477,7 +487,8 @@ class QuestRunner {
       quest.model = model;
       quest.providerId = provider.id;
     }
-    const skillsText = this._questSkillsText || "";
+    const runCtx = this._runCtx?.get(questId) || {};
+    const skillsText = runCtx.skillsText || "";
     const system = buildQuestSystem(
       cfg,
       workspaceRoot,
@@ -486,7 +497,7 @@ class QuestRunner {
       provider,
       model,
       skillsText,
-      this._questMemoryText || ""
+      runCtx.memoryText || ""
     );
 
     const messages = [
@@ -503,12 +514,13 @@ class QuestRunner {
     const toolCtx = {
       cfg,
       workspaceRoot,
+      signal, // 供 executeTool 长任务响应 stop 中止
       openTabs: [],
       activeFile: "",
       activeSelection: "",
       confirm: bridges.confirm || (async () => true),
       ptyBridge: bridges.ptyBridge || null,
-      skillCatalog: this._questSkillCatalog || null,
+      skillCatalog: runCtx.skillCatalog || null,
       mcpManager: this.mcpManager || null,
       onFsChange: async (filePath, kind) => {
         await this._captureChange(questId, workspaceRoot, filePath, kind);
@@ -523,15 +535,16 @@ class QuestRunner {
 
     const maxRounds = (() => {
       const n = Number(cfg?.agentMaxRounds);
-      if (Number.isFinite(n) && n >= 4) return Math.min(80, Math.floor(n));
-      return 32;
+      if (!Number.isFinite(n) || n <= 0) return Number.POSITIVE_INFINITY;
+      if (n >= 4) return Math.floor(n);
+      return Number.POSITIVE_INFINITY;
     })();
     const maxAutoContinue = (() => {
       if (cfg?.agentAutoContinue === false || cfg?.agentAutoContinue === 0)
         return 0;
       const n = Number(cfg?.agentAutoContinue);
-      if (Number.isFinite(n) && n >= 0) return Math.min(5, Math.floor(n));
-      return 2;
+      if (!Number.isFinite(n) || n < 0) return Number.POSITIVE_INFINITY;
+      return Math.floor(n);
     })();
     let assistantAcc = "";
     let autoContinues = 0;
@@ -539,8 +552,9 @@ class QuestRunner {
     let usedTools = false;
 
     while (!signal.aborted) {
-    let hitRoundCap = true;
-    for (let round = 0; round < maxRounds; round++) {
+    let hitRoundCap = Number.isFinite(maxRounds);
+    const roundLimit = Number.isFinite(maxRounds) ? maxRounds : Number.MAX_SAFE_INTEGER;
+    for (let round = 0; round < roundLimit; round++) {
       if (signal.aborted) throw new Error("aborted");
 
       const toolCalls = new Map();
@@ -552,7 +566,7 @@ class QuestRunner {
         progress: lerp(
           progressRange.progressFrom,
           progressRange.progressTo,
-          (round + 0.3) / maxRounds
+          Number.isFinite(maxRounds) ? (round + 0.3) / maxRounds : 0.5
         ),
       });
 
@@ -632,12 +646,10 @@ class QuestRunner {
         if (
           call.function.name === "write_file" ||
           call.function.name === "edit_file" ||
-          call.function.name === "apply_diff" ||
-          call.function.name === "create_document"
+          call.function.name === "apply_diff"
         ) {
           try {
-            const args = JSON.parse(call.function.arguments || "{}");
-            const p = args.path || args.filename;
+            const p = parseMutatingPath(call.function.arguments);
             if (p) {
               await this._snapshotBefore(questId, workspaceRoot, p);
             }
@@ -664,15 +676,16 @@ class QuestRunner {
         }
         const content = String(result.content || "").slice(0, 50_000);
 
+        // 停止后到达这里：工具可能已跑完但任务已取消——不再记录变更/追加消息
+        if (signal.aborted) throw new Error("aborted");
+
         if (
           call.function.name === "write_file" ||
           call.function.name === "edit_file" ||
-          call.function.name === "apply_diff" ||
-          call.function.name === "create_document"
+          call.function.name === "apply_diff"
         ) {
           try {
-            const args = JSON.parse(call.function.arguments || "{}");
-            const p = args.path || args.filename;
+            const p = parseMutatingPath(call.function.arguments);
             if (p) {
               await this._captureChange(
                 questId,
@@ -710,10 +723,7 @@ class QuestRunner {
     const wantContinue =
       autoContinues < maxAutoContinue &&
       (hitRoundCap ||
-        (usedTools &&
-          /需要我继续|要我继续|是否继续|接下来我可以|下一步[：:]|如果你想|等你确认|我可以继续|尚未完成|TODO|未完成/i.test(
-            lastText || ""
-          )));
+        (usedTools && looksLikeNeedsContinue(lastText)));
     if (!wantContinue) break;
 
     autoContinues += 1;
@@ -771,56 +781,17 @@ class QuestRunner {
     });
   }
 
-  async applyReject(questId, filePath) {
+async applyReject(questId, filePath) {
     const q = this.store.get(questId);
     if (!q) throw new Error("Quest 不存在");
     const row = q.fileChanges.find((f) => f.path === filePath);
     if (!row) throw new Error("未找到变更");
-    if (row.rejected) return { ok: true, already: true };
 
-    // stale 保护：比对当前磁盘与写入后的 after，防止覆盖用户后改的内容
-    let current = null;
-    let exists = true;
-    try {
-      current = await fs.readFile(filePath, "utf8");
-    } catch {
-      exists = false;
-      current = null;
+    const result = await rollbackFileRow(row);
+    if (result.ok && !result.already) {
+      this.store.rejectChange(questId, filePath);
     }
-    if (row.after != null) {
-      if (exists && current !== String(row.after)) {
-        return {
-          ok: false,
-          code: "STALE_FILE",
-          path: filePath,
-          error: "文件已被再次修改，未自动撤销",
-        };
-      }
-      if (!exists && row.before != null) {
-        return {
-          ok: false,
-          code: "STALE_FILE",
-          path: filePath,
-          error: "文件已不存在，未自动撤销",
-        };
-      }
-    }
-
-    if (row.before == null) {
-      // was create — delete file
-      if (exists) {
-        try {
-          await fs.unlink(filePath);
-        } catch {
-          /* ignore */
-        }
-      }
-    } else {
-      await fs.mkdir(path.dirname(filePath), { recursive: true });
-      await fs.writeFile(filePath, row.before, "utf8");
-    }
-    this.store.rejectChange(questId, filePath);
-    return { ok: true };
+    return result;
   }
 
   async markCompleted(questId) {
@@ -856,7 +827,7 @@ function buildQuestSystem(
   // rulesText already starts with FOP priority rules (highest load priority)
   return [
     rulesText || "",
-    "你是 EMSoder Quest 执行引擎（仿 Qoder Quest，支持自定义第三方模型 BYOK）。",
+    "你是 EMSoder Quest 执行引擎。用户自带模型。先探索再改动，改完等人审。",
     expertHint,
     "规则：先探索再改动；edit_file / apply_diff 精确替换；不要编造文件内容。",
     "匹配已安装 Skill 时先 load_skill 再按技能说明执行（本机 zcode/agents 技能）。",
@@ -890,12 +861,6 @@ function extractJsonArray(text) {
       return null;
     }
   }
-}
-
-function resolveUnder(root, p) {
-  if (!p) return root || process.cwd();
-  if (path.isAbsolute(p)) return p;
-  return path.resolve(root || process.cwd(), p);
 }
 
 function lerp(a, b, t) {

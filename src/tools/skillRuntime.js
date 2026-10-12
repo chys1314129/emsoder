@@ -59,8 +59,42 @@ function readManifest(root) {
  * Build env for child processes / PTY.
  * Does not inject API keys.
  */
-function augmentProcessEnv(baseEnv = process.env) {
+const IMAGE_SECRET_ENV_KEYS = [
+  "MODELSCOPE_API_KEY", "ZHIPU_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY",
+  "SILICONFLOW_API_KEY", "VOLCENGINE_API_KEY", "DASHSCOPE_API_KEY", "QWEN_API_KEY",
+  "MINIMAX_API_KEY", "IMAGE_API_KEY",
+];
+const EXECUTION_ENV_RESERVED = new Set([
+  "PATH", "TERM", "COLORTERM", "TERM_PROGRAM", "NODE_OPTIONS", "NODE_PATH", "NODE_ENV",
+  "ELECTRON_RUN_AS_NODE", "SYSTEMROOT", "COMSPEC", ...IMAGE_SECRET_ENV_KEYS,
+]);
+const EXECUTION_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const EXECUTION_ENV_MAX_ENTRIES = 100;
+const EXECUTION_ENV_MAX_KEY = 128;
+const EXECUTION_ENV_MAX_VALUE = 8192;
+
+/** Validate config-supplied terminal/skill environment without touching process.env. */
+function executionEnv(cfg = {}) {
+  const source = cfg?.executionEnv;
+  if (!source || typeof source !== "object" || Array.isArray(source)) return {};
+  const out = {};
+  for (const [rawKey, rawValue] of Object.entries(source)) {
+    if (Object.keys(out).length >= EXECUTION_ENV_MAX_ENTRIES) break;
+    const key = String(rawKey || "").trim();
+    if (!EXECUTION_ENV_NAME.test(key) || key.length > EXECUTION_ENV_MAX_KEY) continue;
+    if (EXECUTION_ENV_RESERVED.has(key.toUpperCase())) continue;
+    if (typeof rawValue !== "string" || rawValue.length > EXECUTION_ENV_MAX_VALUE) continue;
+    out[key] = rawValue;
+  }
+  return out;
+}
+
+function augmentProcessEnv(baseEnv = process.env, extraEnv = null) {
   const env = { ...baseEnv };
+  // Never leak image-generation credentials to ordinary commands. The caller
+  // must explicitly pass the scoped imageGenerationEnv as extraEnv.
+  for (const key of IMAGE_SECRET_ENV_KEYS) delete env[key];
+  Object.assign(env, extraEnv || {});
   const root = resolveSkillRuntimeRoot();
   if (!root) return env;
 
@@ -88,6 +122,11 @@ function augmentProcessEnv(baseEnv = process.env) {
 
   env.EMSODER_SKILL_RUNTIME = root;
 
+  // Help bundled/CPython on Windows: force UTF-8 stdio so skill scripts that
+  // print CJK (many ppt/pdf skills) don't crash on the default GBK console.
+  if (!env.PYTHONUTF8) env.PYTHONUTF8 = "1";
+  if (!env.PYTHONIOENCODING) env.PYTHONIOENCODING = "utf-8";
+
   const bundledNode = path.join(nodeDir, process.platform === "win32" ? "node.exe" : "node");
   if (fs.existsSync(bundledNode)) {
     env.EMSODER_NODE = bundledNode;
@@ -98,6 +137,54 @@ function augmentProcessEnv(baseEnv = process.env) {
     env.EMSODER_PYTHON = bundledPy;
   }
 
+  return env;
+}
+
+const IMAGE_GEN_BACKENDS = new Set([
+  "modelscope", "zhipu", "openai", "openrouter", "siliconflow",
+  "volcengine", "qwen", "minimax",
+]);
+
+/**
+ * Build a minimal process-only environment for ppt-master image generation.
+ * Callers must restrict it to the ppt-master skill directory; it never mutates
+ * process.env and never returns the API key to a renderer.
+ */
+function imageGenerationEnv(cfg = {}) {
+  const backend = String(cfg.imageGenBackend || "modelscope").trim().toLowerCase();
+  if (!IMAGE_GEN_BACKENDS.has(backend)) return {};
+  const model = String(cfg.imageGenModel || "").trim();
+  const baseUrl = String(cfg.imageGenBaseUrl || "").trim();
+  const env = { IMAGE_BACKEND: backend };
+  const keyNames = {
+    modelscope: "MODELSCOPE_API_KEY",
+    zhipu: "ZHIPU_API_KEY",
+    openai: "OPENAI_API_KEY",
+    openrouter: "OPENROUTER_API_KEY",
+    siliconflow: "SILICONFLOW_API_KEY",
+    volcengine: "VOLCENGINE_API_KEY",
+    qwen: "DASHSCOPE_API_KEY",
+    minimax: "MINIMAX_API_KEY",
+  };
+  const modelNames = {
+    modelscope: "MODELSCOPE_MODEL",
+    zhipu: "ZHIPU_MODEL",
+    openai: "OPENAI_MODEL",
+    openrouter: "OPENROUTER_MODEL",
+    siliconflow: "SILICONFLOW_MODEL",
+    volcengine: "VOLCENGINE_MODEL",
+    qwen: "QWEN_MODEL",
+    minimax: "MINIMAX_MODEL",
+  };
+  // Prefer the GUI's local config. If it is empty, selectively inherit the
+  // matching user-level env var for backward compatibility; no other secret
+  // vars are inherited into the child process.
+  const configuredKey = String(cfg.imageGenApiKey || "").trim();
+  const inheritedKey = String(process.env[keyNames[backend]] || "").trim();
+  const key = configuredKey || inheritedKey;
+  if (key) env[keyNames[backend]] = key;
+  if (model) env[modelNames[backend]] = model;
+  if (baseUrl && backend === "openai") env.OPENAI_BASE_URL = baseUrl;
   return env;
 }
 
@@ -144,6 +231,8 @@ function listBundledTools() {
 module.exports = {
   resolveSkillRuntimeRoot,
   augmentProcessEnv,
+  executionEnv,
+  imageGenerationEnv,
   listBundledTools,
   candidateRoots,
 };

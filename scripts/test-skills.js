@@ -2,6 +2,7 @@
  * Smoke test for zcode-compatible skill discovery.
  * Usage: node scripts/test-skills.js
  */
+const fs = require("fs");
 const path = require("path");
 const {
   loadSkillCatalog,
@@ -135,6 +136,26 @@ Body text.
     "bytes",
     coreLoaded.content.length
   );
+
+  // Core MiniMax packages ship independently of the user's ~/.zcode skill copy.
+  const coreDir = path.join(__dirname, "..", "resources", "core-skills");
+  for (const id of [
+    "ppt-master",
+    "minimax-docx",
+    "minimax-pdf",
+    "minimax-xlsx",
+    "minimax-multimodal-toolkit",
+    "minimax-music-gen",
+    "minimax-music-playlist",
+  ]) {
+    const skillFile = path.join(coreDir, id, "SKILL.md");
+    if (!fs.existsSync(skillFile)) {
+      throw new Error(`core preinstalled skill missing: ${id}`);
+    }
+    const parsed = parseSkillMarkdown(fs.readFileSync(skillFile, "utf8"));
+    if (!parsed.name) throw new Error(`core skill invalid frontmatter: ${id}`);
+  }
+  console.log("core document/media skills ok");
 
   // allowDisabled: UI skills:read can open disabled skills; Agent load_skill must still block
   const disabledPick = catalog.skills.find((s) => s.disabled);

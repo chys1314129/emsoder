@@ -148,6 +148,72 @@
     return xtermReady;
   }
 
+  function isLightTheme() {
+    return (
+      document.body.getAttribute("data-theme") === "light" ||
+      document.documentElement.getAttribute("data-theme") === "light"
+    );
+  }
+
+  function getXtermTheme() {
+    if (isLightTheme()) {
+      return {
+        background: "#fbfaf6",
+        foreground: "#1f1e1a",
+        cursor: "#0d44a8",
+        cursorAccent: "#ffffff",
+        selectionBackground: "#0ea5e933",
+        black: "#1f1e1a",
+        red: "#c5221f",
+        green: "#137333",
+        yellow: "#b06000",
+        blue: "#0d44a8",
+        magenta: "#7c3aed",
+        cyan: "#0e7490",
+        white: "#4a463c",
+        brightBlack: "#6b6558",
+        brightRed: "#ea4335",
+        brightGreen: "#34a853",
+        brightYellow: "#b06000",
+        brightBlue: "#1a73e8",
+        brightMagenta: "#7c3aed",
+        brightCyan: "#0e7490",
+        brightWhite: "#1f1e1a",
+      };
+    }
+    return {
+      background: "#070e18",
+      foreground: "#d7e3f4",
+      cursor: "#38bdf8",
+      cursorAccent: "#041018",
+      selectionBackground: "#0ea5e966",
+      black: "#0b1220",
+      red: "#f87171",
+      green: "#34d399",
+      yellow: "#fbbf24",
+      blue: "#38bdf8",
+      magenta: "#c084fc",
+      cyan: "#22d3ee",
+      white: "#e8eef7",
+      brightBlack: "#6d8099",
+      brightRed: "#fca5a5",
+      brightGreen: "#6ee7b7",
+      brightYellow: "#fde68a",
+      brightBlue: "#7dd3fc",
+      brightMagenta: "#d8b4fe",
+      brightCyan: "#67e8f9",
+      brightWhite: "#ffffff",
+    };
+  }
+
+  function applyXtermTheme() {
+    try {
+      termState.term?.options && (termState.term.options.theme = getXtermTheme());
+    } catch {
+      /* ignore */
+    }
+  }
+
   // ---------- Terminal panel (real PTY + xterm) ----------
   const termState = {
     id: null,
@@ -194,29 +260,7 @@
       fontSize: 13,
       fontFamily:
         "'Cascadia Code', 'Consolas', 'Courier New', monospace",
-      theme: {
-        background: "#070e18",
-        foreground: "#d7e3f4",
-        cursor: "#38bdf8",
-        cursorAccent: "#041018",
-        selectionBackground: "#0ea5e966",
-        black: "#0b1220",
-        red: "#f87171",
-        green: "#34d399",
-        yellow: "#fbbf24",
-        blue: "#38bdf8",
-        magenta: "#c084fc",
-        cyan: "#22d3ee",
-        white: "#e8eef7",
-        brightBlack: "#6d8099",
-        brightRed: "#fca5a5",
-        brightGreen: "#6ee7b7",
-        brightYellow: "#fde68a",
-        brightBlue: "#7dd3fc",
-        brightMagenta: "#d8b4fe",
-        brightCyan: "#67e8f9",
-        brightWhite: "#ffffff",
-      },
+      theme: getXtermTheme(),
       allowProposedApi: true,
       scrollback: 5000,
       convertEol: false,
@@ -711,6 +755,8 @@
   function renderProblems(items) {
     const list = document.getElementById("problemsList");
     const summary = document.getElementById("problemsSummary");
+    const bottomPanel = document.getElementById("bottomPanel");
+    const problemsPane = list?.closest?.('.bottom-pane[data-pane="problems"]');
     const badge = document.getElementById("problemsBadge");
     const sb = document.getElementById("sbProblems");
     if (!list) return;
@@ -745,9 +791,16 @@
       sb.style.opacity = errors + warnings > 0 ? "1" : "0.75";
     }
 
+    // 诊断数据和统计始终更新；底部面板不可见时跳过列表 DOM 重建，
+    // 等用户切到 Problems 标签时由 showBottomTab 统一渲染。
+    const visible =
+      (!bottomPanel || !bottomPanel.classList.contains("collapsed")) &&
+      (!problemsPane || !problemsPane.classList.contains("hidden"));
+    if (!visible) return;
+
     if (!arr.length) {
       list.innerHTML =
-        '<div class="panel-empty">没有诊断信息。<br/>打开/索引 TS/JS 后会显示。F12 跳转定义。</div>';
+        '<div class="panel-empty">没有诊断信息。<br/>打开或索引 TS、JS、CSS、HTML、JSON 文件后会显示。F12 跳转定义。</div>';
       return;
     }
 
@@ -785,16 +838,20 @@
     try {
       const r = await emsoder.listRules();
       if (!r.files?.length) {
-        el.innerHTML =
-          '<div class="panel-empty">未发现项目规则。可添加 AGENTS.md / .emsoder/rules.md / CLAUDE.md</div>';
-        return;
+      el.innerHTML = '<div class="panel-empty">未发现项目规则。可添加 AGENTS.md / .emsoder/rules.md / CLAUDE.md</div>';
+      } else {
+        el.innerHTML = "";
+        for (const f of r.files) {
+          const item = document.createElement("div");
+          item.className = "rules-item";
+          const tag = document.createElement("span");
+          tag.className = "tag";
+          tag.textContent = "RULE";
+          item.appendChild(tag);
+          item.appendChild(document.createTextNode(" " + f));
+          el.appendChild(item);
+        }
       }
-      el.innerHTML = r.files
-        .map(
-          (f) =>
-            `<div class="rules-item"><span class="tag">RULE</span> ${f}</div>`
-        )
-        .join("");
     } catch (err) {
       el.textContent = err.message || err;
     }
@@ -805,7 +862,7 @@
       renderProblems(items);
     });
     document.getElementById("btnReindexLsp")?.addEventListener("click", async () => {
-      window.EmsoderApp?.toast?.("正在索引工作区 TS/JS…");
+      window.EmsoderApp?.toast?.("正在索引工作区源文件…");
       try {
         const r = await window.EmsoderLsp?.indexWorkspace?.(
           (await emsoder.getWorkspace()) || ""
@@ -832,18 +889,8 @@
     document.querySelectorAll(".bottom-tab").forEach((tab) => {
       tab.addEventListener("click", () => showBottomTab(tab.dataset.tab));
     });
-    document.getElementById("btnToggleBottom")?.addEventListener("click", () => {
-      document.getElementById("bottomPanel")?.classList.toggle("collapsed");
-      window.EmsoderResize?.syncBottomResizerVisibility?.();
-      window.EmsoderEditor?.layout?.();
-      setTimeout(resizeTerm, 80);
-    });
-    document.getElementById("btnToggleBottom2")?.addEventListener("click", () => {
-      document.getElementById("bottomPanel")?.classList.toggle("collapsed");
-      window.EmsoderResize?.syncBottomResizerVisibility?.();
-      window.EmsoderEditor?.layout?.();
-      setTimeout(resizeTerm, 80);
-    });
+    // 折叠按钮的点击处理在 app.js 里统一绑定（toggleBottom）。
+    // 这里不要再绑一次：重复绑定会 toggle 两次相互抵消，导致「面板」按钮看似无效。
   }
 
   window.EmsoderPanels = {
@@ -857,5 +904,6 @@
     refreshDebugUi,
     refreshBreakpointsList,
     getTermId: () => termState.id,
+    applyTheme: applyXtermTheme,
   };
 })();

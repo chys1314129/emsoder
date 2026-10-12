@@ -37,10 +37,18 @@ b
 
   // --- safe terminal ---
   assert(isSafeTerminalCommand("git status"), "git safe");
-  assert(isSafeTerminalCommand("npm test"), "npm safe");
   assert(isSafeTerminalCommand("ls -la"), "ls safe");
+  assert(isSafeTerminalCommand("grep foo bar"), "grep safe");
   assert(!isSafeTerminalCommand("rm -rf /"), "rm not safe");
   assert(!isSafeTerminalCommand("del /s /q C:\\Windows"), "del not safe");
+  // 能下载/执行任意代码的命令必须走确认，不能当作“安全”自动放行
+  assert(!isSafeTerminalCommand("npm test"), "npm must not be auto-safe");
+  assert(!isSafeTerminalCommand("node -e 1"), "node must not be auto-safe");
+  assert(!isSafeTerminalCommand("python x.py"), "python must not be auto-safe");
+  assert(!isSafeTerminalCommand("npx pkg"), "npx must not be auto-safe");
+  assert(!isSafeTerminalCommand("pip install x"), "pip must not be auto-safe");
+  assert(!isSafeTerminalCommand("curl http://x"), "curl must not be auto-safe");
+  assert(!isSafeTerminalCommand("./run.sh"), "dot-slash must not be auto-safe");
 
   // --- apply_diff via executeTool (temp workspace) ---
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "emsoder-apply-diff-"));

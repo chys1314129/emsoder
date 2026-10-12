@@ -1,0 +1,23 @@
+{
+  "node": {
+    "version": "22.22.2",
+    "url": "https://nodejs.org/dist/v22.22.2/node-v22.22.2-win-x64.zip",
+    "sha256": "7c93e9d92bf68c07182b471aa187e35ee6cd08ef0f24ab060dfff605fcc1c57c"
+  },
+  "python": {
+    "version": "3.13.12",
+    "url": "https://www.python.org/ftp/python/3.13.12/python-3.13.12-embed-amd64.zip",
+    "sha256": "76f238f606250c87c6beac75dccd35ee99070a13490555936abb6cb64ecce3d0"
+  },
+  "coreArchive": {
+    "sha256": "9472fff38f444693d6a883b8f508371389f3d8bd17822baa57324ee86c7828a1",
+    "files": 12295
+  },
+  "rust": "1.98.1",
+  "npmTools": {
+    "firecrawl-cli": "1.23.3",
+    "mmx-cli": "1.0.25"
+  },
+  "pythonImports": ["_socket", "_ssl", "_ctypes", "select", "pptx", "xlsxwriter", "PIL", "numpy", "requests", "fitz", "mammoth", "openpyxl", "markdownify", "bs4", "flask", "svglib", "reportlab", "tavily", "pypdf"],
+  "coreSkills": ["find-skills", "ppt-master", "minimax-docx", "minimax-pdf", "minimax-xlsx", "minimax-multimodal-toolkit", "minimax-music-gen", "minimax-music-playlist"]
+}

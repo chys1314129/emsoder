@@ -8,30 +8,29 @@ const {
   nativeTheme,
 } = require("electron");
 const path = require("path");
-const os = require("os");
 const fs = require("fs/promises");
+const { pathToFileURL, fileURLToPath } = require("url");
 const {
   loadConfig,
   saveConfig,
   getActiveModel,
   getActiveProvider,
-  getEnabledProviders,
   getProviders,
 } = require("../core/config");
+const logger = require("../core/logger");
 const { SessionStore } = require("../agent/session");
 const { AgentRunner } = require("../agent/runner");
+const { PiRunnerAdapter } = require("../pi/runnerAdapter");
 const { MemoryStore } = require("../agent/memory");
-const fsSync = require("fs");
-const { testProvider, listRemoteModels, chatOnce } = require("../providers");
-const { isHeavyDirName } = require("../tools/paths");
+const { testProvider, chatOnce } = require("../providers");
+const { isHeavyDirName, realpathOrBestEffort } = require("../tools/paths");
 const { searchWorkspace } = require("../tools/search");
 const { listCodeFiles } = require("../tools/codeIndex");
-const { loadWorkspaceTsconfig } = require("../tools/tsconfig");
 const git = require("../tools/git");
-const { loadProjectRules } = require("../tools/rules");
 const { TerminalManager } = require("./terminal");
 const { PtyBridge } = require("./ptyBridge");
 const { NodeDebugger } = require("./debugger");
+const { WorkspaceTaskPool } = require("./workspaceTaskPool");
 const { QuestStore } = require("../agent/questStore");
 const { QuestRunner } = require("../agent/questRunner");
 const { McpManager } = require("../mcp/manager");
@@ -41,6 +40,30 @@ const {
   formatContextLabel,
   formatCacheLabel,
 } = require("../core/contextStats");
+const {
+  normalizePermissionMode,
+} = require("../tools/confirm");
+
+// IPC domain modules (Phase 2 refactor: extracting registerIpc)
+const ipcGit = require("./ipc/git");
+const ipcTerminal = require("./ipc/terminal");
+const ipcPty = require("./ipc/pty");
+const ipcDebugger = require("./ipc/debugger");
+const ipcDrafts = require("./ipc/drafts");
+const ipcMemory = require("./ipc/memory");
+const ipcContext = require("./ipc/context");
+const ipcRules = require("./ipc/rules");
+const ipcProviders = require("./ipc/providers");
+const ipcMcp = require("./ipc/mcp");
+const ipcSkills = require("./ipc/skills");
+const ipcQuest = require("./ipc/quest");
+const ipcFs = require("./ipc/fs");
+const ipcSession = require("./ipc/session");
+const ipcConfig = require("./ipc/config");
+const ipcDialog = require("./ipc/dialog");
+const ipcApp = require("./ipc/app");
+const ipcAgent = require("./ipc/agent");
+const { listCredentials, setCredential, clearCredential, publicProvider, publicMcp } = require("./credentialCatalog");
 
 let mainWindow = null;
 let cfg = null;
@@ -55,16 +78,59 @@ let memoryStore = null;
 let mcpManager = null;
 /** pending confirmations from agent tools */
 const pendingConfirms = new Map();
+const pendingConfirmTimers = new Map();
 let isQuitting = false;
 /** latest inline-completion generation token (drop stale results) */
 let completeGen = 0;
 let completeAbort = null;
-
-function draftsPath() {
-  return path.join(app.getPath("userData"), "emsoder-drafts.json");
-}
+/**
+ * Completion race-state accessor. completeGen/completeAbort are module-level
+ * `let`s used only by agent:complete; this object exposes them to the agent
+ * IPC module via ctx without giving up the mutable binding.
+ */
+const completion = {
+  get gen() {
+    return completeGen;
+  },
+  bumpGen() {
+    completeGen += 1;
+    return completeGen;
+  },
+  get abort() {
+    return completeAbort;
+  },
+  set abort(v) {
+    completeAbort = v;
+  },
+  abortCurrent() {
+    try {
+      completeAbort?.abort();
+    } catch {
+      /* ignore */
+    }
+  },
+};
 
 const isDev = process.argv.includes("--dev");
+
+/**
+ * 仅允许用系统默认方式打开 http(s) 链接；其余（file://、javascript: 等）
+ * 一律拦截。否则渲染层（Monaco 链接检测 / xterm 链接 / markdown 链接）里
+ * 出现 file://xxx.js 之类时，点击会用 shell.openExternal 触发 Windows 的
+ * 「选择打开方式」对话框，或打开本地文件/危险 scheme。
+ */
+function safeOpenExternal(url) {
+  try {
+    const u = new URL(String(url || ""));
+    if (u.protocol === "http:" || u.protocol === "https:") {
+      shell.openExternal(url);
+    } else {
+      logger.warn("拦截打开非 http(s) 链接", { url, protocol: u.protocol });
+    }
+  } catch {
+    logger.warn("拦截打开非法链接", { url });
+  }
+}
 
 // single instance
 const gotLock = app.requestSingleInstanceLock();
@@ -110,10 +176,16 @@ function createWindow() {
     mainWindow.show();
   };
   mainWindow.once("ready-to-show", showMain);
+  mainWindow.webContents.on("did-finish-load", () => {
+    try { mainWindow.webContents.setAudioMuted(cfg?.soundEnabled === false); } catch { /* ignore */ }
+  });
   // Fallback: if HTML/Monaco slow, still surface the shell so user knows it launched
-  setTimeout(showMain, 1200);
+  const showFallback = setTimeout(showMain, 1200);
+  mainWindow.on("closed", () => clearTimeout(showFallback));
   mainWindow.loadFile(path.join(__dirname, "../../renderer/index.html"));
 
+  /** 关闭流程：请求渲染层确认 → 3s 内未应答强制关闭（防渲染层卡死锁窗） */
+  let closeFailsafe = null;
   mainWindow.on("close", (e) => {
     const b = mainWindow.getBounds();
     cfg.windowBounds = b;
@@ -122,18 +194,135 @@ function createWindow() {
     // ask renderer if dirty tabs exist
     e.preventDefault();
     mainWindow.webContents.send("app:before-close");
+    if (closeFailsafe) clearTimeout(closeFailsafe);
+    closeFailsafe = setTimeout(() => {
+      if (isQuitting || !mainWindow || mainWindow.isDestroyed()) return;
+      isQuitting = true;
+      mainWindow.destroy();
+    }, 3000);
+  });
+  mainWindow.on("closed", () => {
+    if (closeFailsafe) clearTimeout(closeFailsafe);
+    // 悬浮球是独立窗口：主窗口关了就一起收，避免它单独把 app 撑着不退出
+    try { destroyFloatingBall(); } catch { /* ignore */ }
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    safeOpenExternal(url);
     return { action: "deny" };
   });
-
+  // 阻止主窗口导航到远程页面（防 preload API 暴露给远程内容）
+  mainWindow.webContents.on("will-navigate", (e, url) => {
+    const own =
+      url.startsWith("file://") &&
+      path.resolve(url.replace(/^file:\/\//, "")) ===
+        path.resolve(path.join(__dirname, "../../renderer/index.html"));
+    if (!own) e.preventDefault();
+  });
   if (isDev) {
     mainWindow.webContents.openDevTools({ mode: "detach" });
   }
 
   buildMenu();
+  applyAudioMute();
+}
+
+/**
+ * 全局静音开关：soundEnabled=false 时用 Electron 的 setAudioMuted 把整个应用
+ * 的音频彻底静掉（不只是完成提示音），渲染层任何声音都发不出来。
+ */
+function applyAudioMute() {
+  const muted = cfg?.soundEnabled === false;
+  for (const win of BrowserWindow.getAllWindows()) {
+    try {
+      if (win && !win.isDestroyed()) win.webContents.setAudioMuted(muted);
+    } catch { /* ignore */ }
+  }
+}
+
+/** 桌面悬浮球：常驻置顶的小窗口，显示任务状态。可由设置开关。 */
+let ballWindow = null;
+function createFloatingBall() {
+  if (ballWindow && !ballWindow.isDestroyed()) {
+    ballWindow.show();
+    return ballWindow;
+  }
+  const primary = require("electron").screen?.getPrimaryDisplay?.();
+  const wa = primary?.workArea || { x: 0, y: 0, width: 1280, height: 800 };
+  const w = 132;
+  const h = 44;
+  ballWindow = new BrowserWindow({
+    width: w,
+    height: h,
+    x: wa.x + wa.width - w - 24,
+    y: wa.y + wa.height - h - 60,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "../preload/preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  ballWindow.setAlwaysOnTop(true, "screen-saver");
+  ballWindow.loadFile(path.join(__dirname, "../../renderer/ball.html"));
+  ballWindow.once("ready-to-show", () => {
+    if (ballWindow && !ballWindow.isDestroyed()) {
+      ballWindow.show();
+      try { ballWindow.webContents.setAudioMuted(cfg?.soundEnabled === false); } catch { /* ignore */ }
+    }
+  });
+  ballWindow.webContents.setWindowOpenHandler(({ url }) => {
+    safeOpenExternal(url);
+    return { action: "deny" };
+  });
+  ballWindow.webContents.on("will-navigate", (e, url) => {
+    const own =
+      url.startsWith("file://") &&
+      path.resolve(url.replace(/^file:\/\//, "")) ===
+        path.resolve(path.join(__dirname, "../../renderer/ball.html"));
+    if (!own) e.preventDefault();
+  });
+  ballWindow.on("closed", () => { ballWindow = null; });
+  return ballWindow;
+}
+
+function destroyFloatingBall() {
+  if (ballWindow && !ballWindow.isDestroyed()) ballWindow.destroy();
+  ballWindow = null;
+}
+
+function syncFloatingBall() {
+  if (cfg?.floatingBallEnabled) createFloatingBall();
+  else destroyFloatingBall();
+}
+
+/** 主进程侧硬超时，确保异步调用一定会返回（菜单"测试当前服务商"等使用）。 */
+function raceTimeout(promise, ms, label) {
+  const timeoutMs = Math.max(3000, Number(ms) || 15000);
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        new Error(
+          `${label || "请求"}超时（${Math.round(timeoutMs / 1000)}s），请检查 Base URL / 网络 / API Key`
+        )
+      );
+    }, timeoutMs);
+  });
+  return Promise.race([Promise.resolve(promise), timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 function buildMenu() {
@@ -199,25 +388,6 @@ function buildMenu() {
         {
           label: "Git 面板",
           click: () => mainWindow?.webContents.send("menu:show-git"),
-        },
-        {
-          label: "问题面板",
-          accelerator: "CmdOrCtrl+Shift+M",
-          click: () => mainWindow?.webContents.send("menu:show-problems"),
-        },
-        {
-          label: "重新索引 TS/JS",
-          click: () => mainWindow?.webContents.send("menu:reindex-lsp"),
-        },
-        {
-          label: "调试面板",
-          accelerator: "CmdOrCtrl+Shift+D",
-          click: () => mainWindow?.webContents.send("menu:show-debug"),
-        },
-        {
-          label: "Quest 任务板",
-          accelerator: "CmdOrCtrl+Shift+Q",
-          click: () => mainWindow?.webContents.send("menu:show-quest"),
         },
         {
           label: "新对话",
@@ -292,7 +462,7 @@ function buildMenu() {
               title: "关于 EMSoder",
               message: "EMSoder 1.0",
               detail:
-                "Qoder 风格独立桌面壳 · 天蓝色皮肤 · 免费 · 可自定义第三方模型\n无账号 · 无 Credits",
+                "打开文件夹，说话，文件会改。你审。\n自己的模型 · 无账号 · 无 Credits",
             });
           },
         },
@@ -302,15 +472,18 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-async function openWorkspace() {
+async function openWorkspace(sessionId = null) {
   const res = await dialog.showOpenDialog(mainWindow, {
     properties: ["openDirectory"],
   });
   if (res.canceled || !res.filePaths[0]) return null;
-  cfg.lastWorkspace = res.filePaths[0];
+  const root = res.filePaths[0];
+  // lastWorkspace remains the picker/default memory; the actual Agent root belongs to a session.
+  cfg.lastWorkspace = root;
+  sessions?.setWorkspaceRoot?.(root, sessionId);
   saveConfig(cfg);
-  mainWindow?.webContents.send("workspace:changed", cfg.lastWorkspace);
-  return cfg.lastWorkspace;
+  mainWindow?.webContents.send("workspace:changed", { workspaceRoot: root, sessionId: sessionId || sessions?.getActive?.()?.id || null });
+  return root;
 }
 
 async function openFileDialog() {
@@ -319,10 +492,116 @@ async function openFileDialog() {
     defaultPath: cfg.lastWorkspace || undefined,
   });
   if (res.canceled) return [];
+  registerExternalFiles(res.filePaths);
   return res.filePaths;
 }
 
+/**
+ * 用户通过对话框/拖拽打开过的绝对路径（可能在工作区外）。
+ * fs:read-file / fs:write-file 的白名单：只有工作区内路径或这些
+ * 「用户明确打开过」的文件才允许读/写。
+ */
+const externallyOpenedFiles = new Set();
+
+function registerExternalFiles(filePaths) {
+  for (const p of Array.isArray(filePaths) ? filePaths : []) {
+    if (typeof p === "string" && p) {
+      try {
+        externallyOpenedFiles.add(path.resolve(p));
+      } catch { /* ignore */ }
+    }
+  }
+}
+
+/** 允许调用 IPC 的「本应用自己的页面」，URL 与文件路径两套比对。 */
+const OWN_FILE_PATHS = [
+  path.resolve(path.join(__dirname, "../../renderer/index.html")),
+  path.resolve(path.join(__dirname, "../../renderer/ball.html")),
+];
+const OWN_PAGES = new Set(OWN_FILE_PATHS.map((p) => pathToFileURL(p).href.toLowerCase()));
+
+/** 校验 IPC 来源：仅信任本应用自己的主 frame 页面（index.html / ball.html）。 */
+function assertTrustedSender(event) {
+  const frame = event?.senderFrame;
+  if (!frame) {
+    logger.warn("IPC 来源拒绝：未知来源");
+    throw new Error("拒绝：未知 IPC 来源");
+  }
+  if (frame.parent !== null) {
+    logger.warn("IPC 来源拒绝：子 frame", String(frame.url || ""));
+    throw new Error("拒绝：子 frame 不可调用");
+  }
+  const rawUrl = String(frame.url || "");
+  let url = rawUrl;
+  const cut = url.search(/[?#]/);
+  if (cut >= 0) url = url.slice(0, cut);
+  if (OWN_PAGES.has(url.toLowerCase())) return true;
+  // 兜底：URL 编码/大小写差异时，按文件路径再比对一次
+  if (url.startsWith("file://")) {
+    try {
+      if (OWN_FILE_PATHS.includes(path.resolve(fileURLToPath(url)))) return true;
+    } catch {
+      /* ignore */
+    }
+  }
+  logger.warn("IPC 来源拒绝：非本应用页面", url);
+  throw new Error("拒绝：仅本地应用页面可调用");
+}
+
+/**
+ * 给所有 IPC handler 统一加来源校验，杜绝个别模块漏加 assertTrustedSender。
+ * 只包 ipcMain.handle（覆盖全部 invoke 通道）；ipcMain.on 的 fire-and-forget
+ * 通道（agent:send）在 ipc/agent.js 内显式校验。
+ */
+function installIpcTrustGuard() {
+  const nativeHandle = ipcMain.handle.bind(ipcMain);
+  ipcMain.handle = (channel, listener) => {
+    const guarded = (event, ...args) => {
+      assertTrustedSender(event);
+      return listener(event, ...args);
+    };
+    return nativeHandle(channel, guarded);
+  };
+}
+
+/** 路径白名单：工作区内 或 用户明确打开过的外部文件 */
+function isAllowedFile(filePath) {
+  const abs = path.resolve(String(filePath || ""));
+  if (cfg?.lastWorkspace) {
+    const ws = path.resolve(cfg.lastWorkspace);
+    const rel = path.relative(ws, abs);
+    const lexInside = !rel.startsWith("..") && !path.isAbsolute(rel);
+    if (lexInside) {
+      // 符号链接 / junction 逃逸防护：真实路径也必须落在工作区内
+      const realWs = realpathOrBestEffort(ws);
+      const realAbs = realpathOrBestEffort(abs);
+      const realRel = path.relative(realWs, realAbs);
+      if (!realRel.startsWith("..") && !path.isAbsolute(realRel)) return true;
+      return false;
+    }
+  }
+  return externallyOpenedFiles.has(abs);
+}
+
+/** 目录白名单：只能浏览当前工作区（读目录保持原逻辑） */
+function assertAllowedDir(dirPath) {
+  const root = dirPath || cfg.lastWorkspace;
+  if (!root) throw new Error("未打开工作区");
+  if (cfg.lastWorkspace) {
+    const abs = path.resolve(root);
+    const ws = path.resolve(cfg.lastWorkspace);
+    const rel = path.relative(ws, abs);
+    if (rel.startsWith("..") || path.isAbsolute(rel)) {
+      throw new Error("目录越界：只能浏览当前工作区");
+    }
+  }
+  return root;
+}
+
 function registerIpc() {
+  // 在任何 ipcMain.handle 注册前装上统一来源守卫（覆盖所有模块的 handler）
+  installIpcTrustGuard();
+
   function publicSession(s) {
     if (!s) return null;
     const path = sessions.getActivePath(s);
@@ -331,1696 +610,315 @@ function registerIpc() {
       id: s.id,
       title: s.title,
       mode: s.mode,
+      workspaceRoot: s.workspaceRoot || "",
+      runStatus: s.runStatus || "idle",
       activeLeafId: s.activeLeafId || null,
       updatedAt: s.updatedAt,
       createdAt: s.createdAt,
       // active branch path for UI (linear view of current branch)
       messages: path,
       branchMeta,
+      excludedBranches: sessions.getExcludedBranches?.(s) || [],
       // 本轮写盘摘要（无 before/after 正文）
       fileChanges: sessions.publicFileChanges(s),
     };
   }
-  ipcMain.handle("app:get-state", () => {
-    const active = sessions?.getActive?.();
-    return {
-      config: publicConfig(cfg),
-      session: active ? publicSession(active) : null,
-      sessions: sessions
-        ? sessions.list().map((s) => ({
-            id: s.id,
-            title: s.title,
-            updatedAt: s.updatedAt,
-          }))
-        : [],
-      workspace: cfg.lastWorkspace || "",
-    };
+
+  // ---- Credentials / safe metadata ----
+  const broadcastPublicConfig = () => {
+    const fresh = publicConfig(cfg);
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win && !win.isDestroyed()) win.webContents.send("config:changed", fresh);
+    }
+  };
+  ipcMain.handle("credentials:list", (event) => {
+    assertTrustedSender(event);
+    return { ok: true, items: listCredentials(cfg) };
+  });
+  ipcMain.handle("credentials:set", (event, payload = {}) => {
+    assertTrustedSender(event);
+    const items = setCredential(cfg, payload);
+    saveConfig(cfg); broadcastPublicConfig();
+    return { ok: true, items };
+  });
+  ipcMain.handle("credentials:clear", (event, payload = {}) => {
+    assertTrustedSender(event);
+    const items = clearCredential(cfg, payload);
+    saveConfig(cfg); broadcastPublicConfig();
+    return { ok: true, items };
   });
 
-  ipcMain.handle("config:get", () => publicConfig(cfg));
-  ipcMain.handle("config:provider-presets", () => require("../core/config").PROVIDER_PRESETS);
-
-  ipcMain.handle("config:update", (_e, patch) => {
-    cfg = { ...cfg, ...patch };
-    // keep providers if provided
-    if (patch.providers) cfg.providers = patch.providers;
-    saveConfig(cfg);
-    if (
-      patch &&
-      ("skillsEnabled" in patch ||
-        "skillsIncludePlugins" in patch ||
-        "skillsDirs" in patch ||
-        "skillsDisabled" in patch)
-    ) {
+  // ---- 一键导出审计日志 ----
+  ipcMain.handle("logger:export", async (event) => {
+    assertTrustedSender(event);
+    const fsSync = require("fs");
+    const logFile = logger.logPath();
+    const dir = path.dirname(logFile);
+    const base = path.basename(logFile);
+    const parts = [];
+    const found = [];
+    for (const name of [base, `${base}.1`, `${base}.2`]) {
+      const p = path.join(dir, name);
       try {
-        require("../tools/skills").invalidateSkillCache();
-      } catch {
-        /* ignore */
-      }
-    }
-    if (patch && "memoriesMaxCount" in patch && memoryStore) {
-      try {
-        memoryStore.setMaxCount(cfg.memoriesMaxCount);
-      } catch {
-        /* ignore */
-      }
-    }
-    if (patch && "mcpServers" in patch && mcpManager) {
-      try {
-        mcpManager.reload(cfg);
-      } catch {
-        /* ignore */
-      }
-    }
-    return publicConfig(cfg);
-  });
-
-  ipcMain.handle("providers:list", () => getProviders(cfg));
-  ipcMain.handle("providers:enabled", () => getEnabledProviders(cfg));
-
-  ipcMain.handle("providers:upsert", (_e, provider) => {
-    const rawList = Array.isArray(cfg.providers) ? cfg.providers : [];
-    const idx = rawList.findIndex((p) => p && p.id === provider.id);
-    const normalized = {
-      id: provider.id,
-      name: provider.name || provider.id,
-      type: provider.type === "anthropic" ? "anthropic" : "openai",
-      baseUrl: String(provider.baseUrl || "").replace(/\/+$/, ""),
-      apiKey: provider.apiKey || "",
-      models: Array.isArray(provider.models) ? provider.models : [],
-      enabled: provider.enabled !== false,
-    };
-    if (provider.headers) normalized.headers = provider.headers;
-    if (provider.chatPath) normalized.chatPath = provider.chatPath;
-    if (provider.timeoutMs != null) normalized.timeoutMs = provider.timeoutMs;
-    if (idx >= 0) {
-      // 合并 raw provider，避免丢失手动写入的 headers/chatPath/timeoutMs 等扩展字段
-      rawList[idx] = { ...rawList[idx], ...normalized };
-    } else {
-      rawList.push(normalized);
-    }
-    cfg.providers = rawList;
-    saveConfig(cfg);
-    return publicConfig(cfg);
-  });
-
-  ipcMain.handle("providers:remove", (_e, id) => {
-    cfg.providers = getProviders(cfg).filter((p) => p.id !== id);
-    saveConfig(cfg);
-    return publicConfig(cfg);
-  });
-
-  ipcMain.handle("providers:set-active", (_e, { providerId, model }) => {
-    cfg.activeProviderId = providerId;
-    cfg.activeModel = model;
-    saveConfig(cfg);
-    return publicConfig(cfg);
-  });
-
-  /** 主进程侧硬超时，确保 IPC 一定会返回，按钮不会永远转圈 */
-  function raceTimeout(promise, ms, label) {
-    const timeoutMs = Math.max(3000, Number(ms) || 15000);
-    let timer;
-    const timeout = new Promise((_, reject) => {
-      timer = setTimeout(() => {
-        reject(
-          new Error(
-            `${label || "请求"}超时（${Math.round(timeoutMs / 1000)}s），请检查 Base URL / 网络 / API Key`
-          )
-        );
-      }, timeoutMs);
-    });
-    return Promise.race([Promise.resolve(promise), timeout]).finally(() => {
-      if (timer) clearTimeout(timer);
-    });
-  }
-
-  ipcMain.handle("providers:test", async (_e, providerId) => {
-    try {
-      const p =
-        getProviders(cfg).find((x) => x.id === providerId) ||
-        getActiveProvider(cfg);
-      if (!p) return { ok: false, message: "未找到服务商", latencyMs: 0 };
-      // 用配置里的完整 provider（含 apiKey）
-      const full = getProviders(cfg).find((x) => x.id === p.id) || p;
-      // 整段最多 16s，保证渲染进程能收到结果
-      return await raceTimeout(testProvider(cfg, full), 16000, "测试");
-    } catch (err) {
-      return {
-        ok: false,
-        message: err?.message || String(err) || "测试失败",
-        latencyMs: 0,
-      };
-    }
-  });
-
-  ipcMain.handle("providers:refresh-models", async (_e, providerId) => {
-    const list = getProviders(cfg);
-    // 注意：cfg.providers 是源数据；getProviders 是映射副本。写回要用 cfg.providers
-    const rawList = Array.isArray(cfg.providers) ? cfg.providers : [];
-    const raw = rawList.find((x) => x && x.id === providerId);
-    const p = list.find((x) => x.id === providerId);
-    if (!raw || !p) {
-      return { ok: false, error: "未找到服务商", models: [] };
-    }
-    try {
-      const models = await raceTimeout(
-        listRemoteModels(p),
-        15000,
-        "刷新模型"
-      );
-      raw.models = (models || []).slice(0, 100);
-      cfg.providers = rawList;
-      saveConfig(cfg);
-      return {
-        ok: true,
-        id: raw.id,
-        name: raw.name || raw.id,
-        type: raw.type === "anthropic" ? "anthropic" : "openai",
-        baseUrl: String(raw.baseUrl || "").replace(/\/+$/, ""),
-        models: Array.isArray(raw.models) ? raw.models : [],
-        enabled: raw.enabled !== false,
-      };
-    } catch (err) {
-      // 失败时不 throw：始终返回结构化结果，前端 finally 一定能复位按钮
-      if (Array.isArray(err?.fallbackModels) && err.fallbackModels.length) {
-        raw.models = err.fallbackModels.slice(0, 100);
-        cfg.providers = rawList;
-        saveConfig(cfg);
-      }
-      return {
-        ok: false,
-        error: err?.message || String(err) || "刷新模型失败",
-        id: raw.id,
-        name: raw.name || raw.id,
-        models: Array.isArray(raw.models) ? raw.models : [],
-      };
-    }
-  });
-
-  ipcMain.handle("workspace:open", () => openWorkspace());
-  ipcMain.handle("workspace:get", () => cfg.lastWorkspace || "");
-
-  // ── MCP ────────────────────────────────────────────────────────────
-  function mcpServerList() {
-    return Array.isArray(mcpManager?.list?.()) ? mcpManager.list() : [];
-  }
-
-  ipcMain.handle("mcp:list", () => ({ ok: true, servers: mcpServerList() }));
-
-  ipcMain.handle("mcp:upsert", (_e, server = {}) => {
-    const id = String(server.id || "").trim();
-    const command = String(server.command || "").trim();
-    const url = String(server.url || "").trim();
-    if (!id || (!command && !url)) return { ok: false, error: "需要 id 以及命令或 URL" };
-    const rawList = Array.isArray(cfg.mcpServers) ? cfg.mcpServers : [];
-    const hasCmd = command !== "";
-    const hasUrl = url !== "";
-    const type =
-      server.type === "http" || server.type === "stdio"
-        ? server.type
-        : hasUrl && !hasCmd
-          ? "http"
-          : hasCmd && !hasUrl
-            ? "stdio"
-            : "http";
-    const timeoutMs = Number(server.timeoutMs);
-    const normalized = {
-      id,
-      name: String(server.name || id).trim() || id,
-      type,
-      command: type === "stdio" ? command : "",
-      args: Array.isArray(server.args)
-        ? server.args.filter((a) => typeof a === "string")
-        : [],
-      cwd: String(server.cwd || ""),
-      env:
-        server.env && typeof server.env === "object" && !Array.isArray(server.env)
-          ? server.env
-          : {},
-      url: type === "http" ? url : "",
-      headers:
-        server.headers && typeof server.headers === "object" && !Array.isArray(server.headers)
-          ? server.headers
-          : {},
-      enabled: server.enabled !== false,
-      timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0
-        ? Math.min(300_000, Math.max(1_000, Math.round(timeoutMs)))
-        : 30_000,
-    };
-    const idx = rawList.findIndex((p) => p && p.id === id);
-    if (idx >= 0) rawList[idx] = normalized;
-    else rawList.push(normalized);
-    cfg.mcpServers = rawList;
-    saveConfig(cfg);
-    try {
-      mcpManager?.reload(cfg);
-    } catch { /* ignore */ }
-    return { ok: true, servers: mcpServerList() };
-  });
-
-  ipcMain.handle("mcp:remove", (_e, id) => {
-    cfg.mcpServers = (Array.isArray(cfg.mcpServers) ? cfg.mcpServers : []).filter(
-      (p) => p && p.id !== id
-    );
-    saveConfig(cfg);
-    try {
-      mcpManager?.reload(cfg);
-    } catch { /* ignore */ }
-    return { ok: true, servers: mcpServerList() };
-  });
-
-  ipcMain.handle("mcp:connect", async (_e, id) => {
-    try {
-      await mcpManager?.connect(id);
-      return { ok: true, servers: mcpServerList() };
-    } catch (e) {
-      return { ok: false, error: e.message || String(e), servers: mcpServerList() };
-    }
-  });
-
-  ipcMain.handle("mcp:disconnect", (_e, id) => {
-    try {
-      mcpManager?.disconnect(id);
-    } catch { /* ignore */ }
-    return { ok: true, servers: mcpServerList() };
-  });
-
-  /** Walk workspace for @-mention autocomplete (lightweight: paths + dirs). */
-  ipcMain.handle("fs:walk-files", async (_e, opts = {}) => {
-    const root = cfg.lastWorkspace || "";
-    if (!root) return { ok: false, files: [], error: "未打开工作区" };
-    const max = Number(opts.maxFiles) > 0 ? Number(opts.maxFiles) : 600;
-    const maxDepth = Number(opts.maxDepth) > 0 ? Number(opts.maxDepth) : 10;
-    const files = [];
-    const dirs = [];
-    const walk = async (dir, depth) => {
-      if (files.length + dirs.length >= max || depth > maxDepth) return;
-      let entries;
-      try {
-        entries = await fs.readdir(dir, { withFileTypes: true });
-      } catch { return; }
-      for (const e of entries) {
-        if (files.length + dirs.length >= max) break;
-        if (e.name.startsWith(".") && e.name !== ".github") continue;
-        if (isHeavyDirName(e.name)) continue;
-        const abs = path.join(dir, e.name);
-        const rel = path.relative(root, abs).replace(/\\/g, "/");
-        if (e.isDirectory()) {
-          dirs.push({ path: rel, isDirectory: true });
-          await walk(abs, depth + 1);
-        } else {
-          files.push({ path: rel, isDirectory: false, ext: path.extname(e.name).toLowerCase() });
+        if (fsSync.existsSync(p)) {
+          parts.push(`========== ${name} ==========\n` + fsSync.readFileSync(p, "utf8"));
+          found.push(name);
         }
-      }
-    };
-    await walk(root, 0);
-    return { ok: true, files, dirs, root };
-  });
-
-  ipcMain.handle("fs:read-dir", async (_e, dirPath) => {
-    const root = dirPath || cfg.lastWorkspace;
-    if (!root) return [];
-    if (cfg.lastWorkspace) {
-      const abs = path.resolve(root);
-      const ws = path.resolve(cfg.lastWorkspace);
-      const rel = path.relative(ws, abs);
-      if (rel.startsWith("..") || path.isAbsolute(rel)) {
-        throw new Error("目录越界：只能浏览当前工作区");
-      }
-    }
-    const entries = await fs.readdir(root, { withFileTypes: true });
-    return entries
-      .filter((e) => {
-        if (e.name === ".gitignore" || e.name === ".env.example") return true;
-        if (e.name.startsWith(".") && e.name !== ".github") return false;
-        return true;
-      })
-      .map((e) => ({
-        name: e.name,
-        path: path.join(root, e.name),
-        isDirectory: e.isDirectory(),
-        heavy: e.isDirectory() && isHeavyDirName(e.name),
-      }))
-      .sort((a, b) => {
-        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
-  });
-
-  ipcMain.handle("fs:read-file", async (_e, filePath) => {
-    if (cfg.lastWorkspace) {
-      const abs = path.resolve(filePath);
-      const rel = path.relative(cfg.lastWorkspace, abs);
-      // allow files under workspace OR explicitly opened absolute paths outside (user open dialog)
-      // still block obvious path tricks when under workspace ops from tree
-      if (rel.includes("\0")) throw new Error("非法路径");
-    }
-    const stat = await fs.stat(filePath);
-    if (stat.size > 2 * 1024 * 1024) {
-      throw new Error("文件过大（>2MB），请用外部编辑器打开");
-    }
-    const buf = await fs.readFile(filePath);
-    if (buf.includes(0)) {
-      throw new Error("二进制文件，无法作为文本打开");
-    }
-    const content = buf.toString("utf8");
-    return { path: filePath, content, size: stat.size };
-  });
-
-  ipcMain.handle("fs:write-file", async (_e, { filePath, content }) => {
-    if (cfg.lastWorkspace) {
-      const abs = path.resolve(filePath);
-      const rel = path.relative(cfg.lastWorkspace, abs);
-      if (rel.startsWith("..") || path.isAbsolute(rel)) {
-        // allow save if file was opened from outside via dialog — only block path traversal tokens
-        if (String(filePath).includes("\0")) throw new Error("非法路径");
-      }
-    }
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, content, "utf8");
-    return { ok: true, path: filePath };
-  });
-
-  ipcMain.handle("fs:open-dialog", async () => {
-    const files = await openFileDialog();
-    if (files?.length) {
-      mainWindow?.webContents.send("files:open", files);
-    }
-    return files;
-  });
-
-  /** Pick files as chat attachments (do NOT open in editor) */
-  ipcMain.handle("fs:pick-attach", async () => {
-    const res = await dialog.showOpenDialog(mainWindow, {
-      properties: ["openFile", "multiSelections"],
-      defaultPath: cfg.lastWorkspace || undefined,
-      filters: [
-        {
-          name: "Code & text",
-          extensions: [
-            "js",
-            "ts",
-            "tsx",
-            "jsx",
-            "json",
-            "md",
-            "txt",
-            "py",
-            "go",
-            "rs",
-            "java",
-            "c",
-            "cpp",
-            "h",
-            "cs",
-            "css",
-            "html",
-            "vue",
-            "yml",
-            "yaml",
-            "toml",
-            "xml",
-            "sql",
-            "sh",
-            "bat",
-            "ps1",
-            "log",
-          ],
-        },
-        {
-          name: "Images (vision)",
-          extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp"],
-        },
-        { name: "All", extensions: ["*"] },
-      ],
-    });
-    if (res.canceled || !res.filePaths?.length) return [];
-    const out = [];
-    const imageMime = {
-      ".png": "image/png",
-      ".jpg": "image/jpeg",
-      ".jpeg": "image/jpeg",
-      ".gif": "image/gif",
-      ".webp": "image/webp",
-      ".bmp": "image/bmp",
-    };
-    for (const filePath of res.filePaths.slice(0, 8)) {
-      try {
-        const stat = await fs.stat(filePath);
-        const ext = path.extname(filePath).toLowerCase();
-        const isImage = !!imageMime[ext];
-        let content = "";
-        let kind = isImage ? "image" : "text";
-        let dataUrl = "";
-        let mime = "";
-        if (isImage) {
-          // vision: embed as base64 data URL (cap ~4MB file)
-          if (stat.size > 4 * 1024 * 1024) {
-            kind = "path";
-            content = `(图片过大 ${(stat.size / 1024 / 1024).toFixed(1)}MB，未嵌入，仅路径)`;
-          } else {
-            const buf = await fs.readFile(filePath);
-            mime = imageMime[ext] || "image/png";
-            dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
-            content = ""; // never dump base64 into chat text
-          }
-        } else if (stat.size > 256 * 1024) {
-          content = `(文件过大 ${(stat.size / 1024).toFixed(0)}KB，仅附路径，未内嵌内容)`;
-          kind = "path";
-        } else {
-          const buf = await fs.readFile(filePath);
-          if (buf.includes(0)) {
-            content = "(二进制文件，仅附路径)";
-            kind = "path";
-          } else {
-            content = buf.toString("utf8");
-          }
-        }
-        out.push({
-          path: filePath,
-          name: path.basename(filePath),
-          size: stat.size,
-          kind,
-          content,
-          dataUrl,
-          mime,
-        });
-      } catch (e) {
-        out.push({
-          path: filePath,
-          name: path.basename(filePath),
-          size: 0,
-          kind: "path",
-          content: "",
-          dataUrl: "",
-          mime: "",
-          error: e.message || String(e),
-        });
-      }
-    }
-    return out;
-  });
-
-  ipcMain.handle("fs:search", async (_e, opts) => {
-    return searchWorkspace(cfg.lastWorkspace || "", opts || {});
-  });
-
-  ipcMain.handle("fs:list-code-files", async (_e, opts) => {
-    return listCodeFiles(cfg.lastWorkspace || "", opts || {});
-  });
-
-  ipcMain.handle("app:allow-close", () => {
-    isQuitting = true;
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.destroy();
-    }
-    return { ok: true };
-  });
-
-
-  function sessionListItems() {
-    return sessions.list().map((s) => ({
-      id: s.id,
-      title: s.title,
-      updatedAt: s.updatedAt,
-      createdAt: s.createdAt,
-      mode: s.mode || "agent",
-      messageCount: sessions.visibleMessageCount(s),
-    }));
-  }
-
-  ipcMain.handle("session:list", () => sessionListItems());
-  ipcMain.handle("session:rename", (_e, { id, title } = {}) => {
-    const s = sessions.rename(id, title);
-    if (!s) return { ok: false, error: "会话不存在" };
-    return {
-      ok: true,
-      session: publicSession(s),
-      sessions: sessionListItems(),
-    };
-  });
-  ipcMain.handle("session:remove", (_e, id) => {
-    const r = sessions.remove(id);
-    return {
-      ...r,
-      session: publicSession(sessions.getActive()),
-      sessions: sessionListItems(),
-    };
-  });
-  ipcMain.handle("session:remove-many", (_e, ids) => {
-    const r = sessions.removeMany(ids);
-    return {
-      ...r,
-      session: publicSession(sessions.getActive()),
-      sessions: sessionListItems(),
-    };
-  });
-  ipcMain.handle("session:get", () => publicSession(sessions.getActive()));
-  ipcMain.handle("session:new", () => {
-    const s = sessions.create(cfg.agentMode !== false ? "agent" : "ask");
-    return publicSession(s);
-  });
-  ipcMain.handle("session:set-active", (_e, id) =>
-    publicSession(sessions.setActive(id))
-  );
-  ipcMain.handle("session:clear", () => {
-    sessions.clearActive();
-    return publicSession(sessions.getActive());
-  });
-
-  /**
-   * Chat Agent 串行任务队列（禁止并发抢跑）。
-   * 旧行为：新 send 会 stop 当前轮；现改为排队，stop 中止当前并清空队列。
-   */
-  const chatJobQueue = [];
-  let chatQueueBusy = false;
-
-  function emitChatQueueStatus(extra = {}) {
-    const win = mainWindow;
-    if (!win || win.isDestroyed()) return;
-    win.webContents.send("agent:event", {
-      type: "queue",
-      depth: chatJobQueue.length,
-      running: !!(runner.isRunning || chatQueueBusy),
-      ...extra,
-    });
-  }
-
-  function enqueueChatJob(runFn) {
-    return new Promise((resolve, reject) => {
-      chatJobQueue.push({ runFn, resolve, reject });
-      emitChatQueueStatus();
-      pumpChatQueue();
-    });
-  }
-
-  async function pumpChatQueue() {
-    if (chatQueueBusy) return;
-    chatQueueBusy = true;
-    emitChatQueueStatus();
-    // 运行中加大写盘防抖，减少主线程阻塞
-    sessions?.setDebounceMs?.(2000);
-    questStore?.setDebounceMs?.(2000);
-    try {
-      while (chatJobQueue.length) {
-        const job = chatJobQueue.shift();
-        emitChatQueueStatus();
-        try {
-          const result = await job.runFn();
-          job.resolve(result);
-        } catch (e) {
-          job.reject(e);
-        }
-        emitChatQueueStatus();
-      }
-    } finally {
-      sessions?.setDebounceMs?.(450);
-      questStore?.setDebounceMs?.(400);
-    }
-    chatQueueBusy = false;
-    emitChatQueueStatus();
-  }
-
-  /** 简易前后缀对齐行 diff（无第三方依赖） */
-  function simpleLineDiff(before, after, maxLines = 500) {
-    const a = String(before ?? "").split(/\r?\n/);
-    const b = String(after ?? "").split(/\r?\n/);
-    let i = 0;
-    let j = 0;
-    while (i < a.length && j < b.length && a[i] === b[j]) {
-      i++;
-      j++;
-    }
-    let ai = a.length;
-    let bi = b.length;
-    while (ai > i && bi > j && a[ai - 1] === b[bi - 1]) {
-      ai--;
-      bi--;
-    }
-    const out = [];
-    out.push("--- before");
-    out.push("+++ after");
-    for (let k = 0; k < i && out.length < maxLines; k++) {
-      out.push(" " + a[k]);
-    }
-    for (let k = i; k < ai && out.length < maxLines; k++) {
-      out.push("-" + a[k]);
-    }
-    for (let k = j; k < bi && out.length < maxLines; k++) {
-      out.push("+" + b[k]);
-    }
-    for (let k = ai; k < a.length && out.length < maxLines; k++) {
-      out.push(" " + a[k]);
-    }
-    if (out.length >= maxLines) out.push("…(diff 已截断)");
-    return out.join("\n");
-  }
-
-  /** Edit past user message → new branch, keep old answers, then run agent */
-  ipcMain.handle("session:branch-edit", async (_event, payload) => {
-    const messageId = payload?.messageId;
-    const text = String(payload?.text || "").trim();
-    if (!messageId || !text) throw new Error("缺少 messageId 或 text");
-
-    return enqueueChatJob(async () => {
-      const { userMsg } = sessions.branchFromUserEdit(messageId, text);
-      return runAgentTurn({
-        runner,
-        cfg,
-        text,
-        payload,
-        getWindow: () => mainWindow,
-        sessions,
-        publicSession,
-        confirm: askConfirm,
-        ptyBridge,
-        memoryStore,
-        skipUserAppend: true,
-        preEvents: (send) => {
-          send("agent:event", {
-            type: "branch",
-            session: publicSession(sessions.getActive()),
-          });
-          send("agent:event", { type: "user", text, messageId: userMsg.id });
-          send("agent:event", { type: "assistant_start" });
-        },
-      });
-    });
-  });
-
-  ipcMain.handle("session:switch-branch", (_e, payload) => {
-    const messageId = payload?.messageId;
-    const dir = payload?.direction || "next";
-    if (!messageId) throw new Error("缺少 messageId");
-    sessions.switchBranch(messageId, dir);
-    return publicSession(sessions.getActive());
-  });
-
-  ipcMain.handle("agent:stop", () => {
-    while (chatJobQueue.length) {
-      const job = chatJobQueue.shift();
-      try {
-        job.reject(new Error("已停止并清空队列"));
       } catch {
         /* ignore */
       }
     }
-    runner.stop();
-    emitChatQueueStatus({ cleared: true });
-    return { ok: true };
-  });
-
-  ipcMain.handle("agent:is-running", () => runner.isRunning || chatQueueBusy || chatJobQueue.length > 0);
-
-  ipcMain.handle("agent:queue-status", () => ({
-    ok: true,
-    depth: chatJobQueue.length,
-    running: !!(runner.isRunning || chatQueueBusy),
-  }));
-
-  function targetSession(sessionId) {
-    return sessions.getById?.(sessionId) || sessions.getActive();
-  }
-
-  /** Chat 本轮文件变更摘要（不含正文） */
-  ipcMain.handle("agent:file-changes", (_e, { sessionId } = {}) => ({
-    ok: true,
-    fileChanges: sessions.publicFileChanges(sessionId),
-  }));
-
-  /** 单文件写前/写后 + 简易 diff（按需拉取，避免列表 IPC 爆炸） */
-  ipcMain.handle("agent:file-change-diff", (_e, { path: filePath, sessionId } = {}) => {
-    const body = sessions.getFileChangeBodies(filePath, 120_000, sessionId);
-    if (!body) return { ok: false, error: "未找到该文件的本轮快照" };
-    return {
-      ok: true,
-      ...body,
-      diff: simpleLineDiff(body.before, body.after),
-    };
-  });
-
-  /** 回滚单个文件到本轮写前 */
-  ipcMain.handle("agent:reject-change", async (_e, { path: filePath, sessionId } = {}) => {
-    const r = await runner.applyReject(filePath, sessionId);
-    return {
-      ...r,
-      fileChanges: sessions.publicFileChanges(sessionId),
-      session: publicSession(targetSession(sessionId)),
-    };
-  });
-
-  /** 一键回滚本轮全部未撤销变更 */
-  ipcMain.handle("agent:reject-all-changes", async (_e, { sessionId } = {}) => {
-    const r = await runner.applyRejectAll(sessionId);
-    return {
-      ...r,
-      fileChanges: sessions.publicFileChanges(sessionId),
-      session: publicSession(targetSession(sessionId)),
-    };
-  });
-
-  /** 确认本轮改动并清空摘要（不回滚） */
-  ipcMain.handle("agent:accept-all-changes", (_e, { sessionId } = {}) => {
-    sessions.clearFileChanges(sessionId);
-    return {
-      ok: true,
-      fileChanges: sessions.publicFileChanges(sessionId),
-      session: publicSession(targetSession(sessionId)),
-    };
-  });
-
-  ipcMain.on("agent:send", (_event, payload) => {
-    const text = String(payload?.text || "").trim();
-    if (!text) return;
-    enqueueChatJob(() =>
-      runAgentTurn({
-        runner,
-        cfg,
-        text,
-        payload,
-        getWindow: () => mainWindow,
-        sessions,
-        publicSession,
-        confirm: askConfirm,
-        ptyBridge,
-        memoryStore,
-      })
-    ).catch(() => {
-      /* errors already pushed via agent events */
-    });
-  });
-
-  ipcMain.handle("agent:confirm-response", (_e, { id, allow }) => {
-    const fn = pendingConfirms.get(id);
-    if (fn) {
-      pendingConfirms.delete(id);
-      fn(!!allow);
+    if (!parts.length) {
+      return { ok: false, error: "暂无日志内容" };
     }
-    return { ok: true };
-  });
-
-  ipcMain.handle("agent:inline-edit", async (_e, { instruction, code, language, file }) => {
-    const result = await chatOnce(cfg, {
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a code editor. Return ONLY the full replacement code. No markdown fences, no explanation.",
-        },
-        {
-          role: "user",
-          content: [
-            file ? `File: ${file}` : "",
-            language ? `Language: ${language}` : "",
-            `Instruction: ${instruction}`,
-            "Code:",
-            String(code || "").slice(0, 20000),
-          ]
-            .filter(Boolean)
-            .join("\n"),
-        },
-      ],
-      maxTokens: 8192,
-      temperature: 0.1,
-    });
-    let next = String(result || "").trim();
-    if (next.startsWith("```")) {
-      next = next.replace(/^```[\w-]*\n?/, "").replace(/```$/, "").trim();
-    }
-    return { code: next };
-  });
-
-  ipcMain.handle("agent:complete", async (_e, payload) => {
-    if (cfg.completionEnabled === false) {
-      return { text: "" };
-    }
-    const prefix = String(payload?.prefix || "").slice(-4000);
-    const suffix = String(payload?.suffix || "").slice(0, 1500);
-    const language = payload?.language || "";
-    if (prefix.trim().length < 8) return { text: "" };
-
-    // cancel previous in-flight completion (race: keep only latest)
-    completeGen += 1;
-    const myGen = completeGen;
-    try {
-      completeAbort?.abort();
-    } catch {
-      /* ignore */
-    }
-    completeAbort = new AbortController();
-    const signal = completeAbort.signal;
-
-    try {
-      const result = await chatOnce(cfg, {
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are a code completion engine. Return ONLY the code to insert at the cursor. No markdown fences, no explanation. Prefer short completions (1-12 lines).",
-          },
-          {
-            role: "user",
-            content: [
-              language ? `Language: ${language}` : "",
-              "Prefix:",
-              prefix,
-              "Suffix:",
-              suffix,
-              "Completion:",
-            ]
-              .filter(Boolean)
-              .join("\n"),
-          },
-        ],
-        maxTokens: 256,
-        temperature: 0.1,
-        signal,
-        timeoutMs: 20_000,
-      });
-      if (myGen !== completeGen || signal.aborted) {
-        return { text: "", stale: true };
-      }
-      let text = String(result || "").trim();
-      if (text.startsWith("```")) {
-        text = text.replace(/^```[\w-]*\n?/, "").replace(/```$/, "").trim();
-      }
-      return { text: text.split(/\r?\n/).slice(0, 12).join("\n") };
-    } catch (err) {
-      if (err?.name === "AbortError" || myGen !== completeGen) {
-        return { text: "", stale: true };
-      }
-      return { text: "", error: err.message || String(err) };
-    }
-  });
-
-  ipcMain.handle("agent:commit-message", async () => {
-    const root = cfg.lastWorkspace;
-    if (!root) throw new Error("未打开工作区");
-    const status = await git.getStatus(root);
-    if (!status.ok) throw new Error(status.error || "git status failed");
-    if (!status.files.length) return { message: "", empty: true };
-    const diff = await git.getDiff(root, { staged: false });
-    const stagedDiff = await git.getDiff(root, { staged: true });
-    const body = [
-      `branch: ${status.branch}`,
-      "files:",
-      ...status.files.map((f) => `${f.status} ${f.path}`),
-      "",
-      "staged diff:",
-      (stagedDiff.diff || "").slice(0, 12000),
-      "",
-      "unstaged diff:",
-      (diff.diff || "").slice(0, 12000),
-    ].join("\n");
-    const message = await chatOnce(cfg, {
-      messages: [
-        {
-          role: "system",
-          content:
-            "Generate a concise conventional commit message (type(scope): subject). Output only the message line(s), no quotes, no explanation.",
-        },
-        { role: "user", content: body.slice(0, 24000) },
-      ],
-      maxTokens: 200,
-      temperature: 0.2,
-    });
-    return {
-      message: String(message || "")
-        .trim()
-        .replace(/^["']|["']$/g, ""),
-    };
-  });
-
-  // ---- Git ----
-  ipcMain.handle("git:status", async () => git.getStatus(cfg.lastWorkspace || ""));
-  ipcMain.handle("git:diff", async (_e, opts) =>
-    git.getDiff(cfg.lastWorkspace || "", opts || {})
-  );
-  ipcMain.handle("git:stage", async (_e, filePath) =>
-    git.stage(cfg.lastWorkspace || "", filePath)
-  );
-  ipcMain.handle("git:unstage", async (_e, filePath) =>
-    git.unstage(cfg.lastWorkspace || "", filePath)
-  );
-  ipcMain.handle("git:discard", async (_e, filePath) => {
-    const r = await dialog.showMessageBox(mainWindow, {
-      type: "warning",
-      buttons: ["取消", "丢弃更改"],
-      defaultId: 0,
-      cancelId: 0,
-      message: `丢弃对 ${filePath} 的未提交修改？`,
-      detail: "此操作不可撤销。",
-    });
-    if (r.response !== 1) return { ok: false, cancelled: true };
-    return git.discard(cfg.lastWorkspace || "", filePath);
-  });
-  ipcMain.handle("git:commit", async (_e, message) =>
-    git.commit(cfg.lastWorkspace || "", message)
-  );
-  ipcMain.handle("git:log", async (_e, limit) =>
-    git.getLog(cfg.lastWorkspace || "", limit || 20)
-  );
-
-  // ---- Terminal (real PTY) ----
-  ipcMain.handle("term:create", (_e, size) =>
-    terminals.create(cfg.lastWorkspace || process.cwd(), size || {})
-  );
-  ipcMain.handle("term:list", () => terminals.list());
-  ipcMain.handle("term:write", (_e, { id, data }) => terminals.write(id, data));
-  ipcMain.handle("term:resize", (_e, { id, cols, rows }) =>
-    terminals.resize(id, cols, rows)
-  );
-  ipcMain.handle("term:interrupt", (_e, id) => terminals.interrupt(id));
-  ipcMain.handle("term:kill", (_e, id) => terminals.kill(id));
-  ipcMain.handle("term:dispose", (_e, id) => terminals.dispose(id));
-  // legacy line-run kept as helper: write command + Enter
-  ipcMain.handle("term:run", async (_e, { id, command }) => {
-    const cmd = String(command || "");
-    if (!cmd) return { ok: true };
-    return terminals.write(id, cmd.endsWith("\r") || cmd.endsWith("\n") ? cmd : cmd + "\r");
-  });
-  ipcMain.handle("term:available", () => {
-    const diag =
-      typeof terminals?.diagnostics === "object"
-        ? terminals.diagnostics
-        : null;
-    return {
-      ok: terminals?.available !== false,
-      available: !!terminals?.available,
-      diagnostics: diag,
-    };
-  });
-
-  // ---- Rules ----
-  ipcMain.handle("rules:list", async () => {
-    const r = await loadProjectRules(cfg.lastWorkspace || "");
-    return r;
-  });
-
-  // ---- Skills (zcode / agents SKILL.md) ----
-  ipcMain.handle("skills:list", async () => {
-    const {
-      loadSkillCatalog,
-    } = require("../tools/skills");
-    let SKILL_CN = {};
-    let extractTriggers = () => [];
-    try {
-      ({ SKILL_CN, extractTriggers } = require("../tools/skillInfo"));
-    } catch {
-      /* optional enrichment for sidebar search */
-    }
-    try {
-      const catalog = await loadSkillCatalog(cfg, cfg.lastWorkspace || "");
-      let runtime = null;
-      try {
-        runtime = require("../tools/skillRuntime").listBundledTools();
-      } catch {
-        runtime = null;
-      }
-      return {
-        ok: true,
-        enabled: catalog.enabled !== false,
-        roots: catalog.roots || [],
-        skills: (catalog.skills || []).map((s) => {
-          const key = String(s.name || s.id || "").toLowerCase();
-          const cn = SKILL_CN[key] || SKILL_CN[s.name] || SKILL_CN[s.id];
-          const cnDescription = cn?.desc || "";
-          const triggers =
-            (cn?.triggers && cn.triggers.length
-              ? cn.triggers
-              : extractTriggers(s.description || "")) || [];
-          return {
-            id: s.id,
-            name: s.name,
-            description: s.description,
-            cnDescription,
-            triggers,
-            source: s.source,
-            dir: s.dir,
-            disabled: !!s.disabled,
-          };
-        }),
-        runtime,
-      };
-    } catch (e) {
-      return { ok: false, error: e.message || String(e), skills: [], roots: [] };
-    }
-  });
-  function applySkillsDisabledKeys(keys, disabled) {
-    const list = Array.isArray(cfg.skillsDisabled)
-      ? [...cfg.skillsDisabled]
-      : [];
-    const drop = new Set(
-      (Array.isArray(keys) ? keys : [])
-        .map((x) => String(x || "").trim().toLowerCase())
-        .filter(Boolean)
-    );
-    if (!drop.size) return { ok: false, error: "missing ids", changed: 0 };
-    let next = list.filter((x) => !drop.has(String(x).toLowerCase()));
-    if (disabled) {
-      for (const raw of keys) {
-        const key = String(raw || "").trim();
-        if (!key) continue;
-        const lower = key.toLowerCase();
-        if (!next.some((x) => String(x).toLowerCase() === lower)) next.push(key);
-      }
-    }
-    cfg.skillsDisabled = next;
-    saveConfig(cfg);
-    try {
-      require("../tools/skills").invalidateSkillCache();
-    } catch {
-      /* ignore */
-    }
-    return {
-      ok: true,
-      changed: drop.size,
-      skillsDisabled: cfg.skillsDisabled,
-    };
-  }
-
-  ipcMain.handle("skills:set-disabled", (_e, { id, disabled }) => {
-    const key = String(id || "").trim();
-    if (!key) return { ok: false, error: "missing id" };
-    return applySkillsDisabledKeys([key], disabled);
-  });
-
-  // 批量禁用/启用（技能侧栏：对当前筛选结果一键操作）
-  ipcMain.handle("skills:set-disabled-batch", (_e, { ids, disabled }) => {
-    const keys = Array.isArray(ids) ? ids : [];
-    return applySkillsDisabledKeys(keys, disabled);
-  });
-
-  ipcMain.handle("skills:read", async (_e, { id }) => {
-    const key = String(id || "").trim();
-    if (!key) return { ok: false, error: "missing id" };
-    try {
-      const { loadSkillCatalog, loadSkillContent } = require("../tools/skills");
-      const catalog = await loadSkillCatalog(cfg, cfg.lastWorkspace || "");
-      const result = await loadSkillContent(catalog, key, "", {
-        allowDisabled: true,
-      });
-      if (!result.ok) return result;
-      const skill = result.skill || {};
-      const skillId = String(skill.id || skill.name || key).toLowerCase();
-      let cnDesc = "";
-      let cnTriggers = [];
-      let autoTriggers = [];
-      try {
-        const { SKILL_CN, extractTriggers } = require("../tools/skillInfo");
-        const cn = SKILL_CN[skillId] || SKILL_CN[skill.name] || {};
-        cnDesc = cn.desc || "";
-        cnTriggers = cn.triggers || [];
-        autoTriggers = extractTriggers(skill.description || "");
-      } catch { /* ignore */ }
-      return {
-        ok: true,
-        name: skill.name || key,
-        description: skill.description || "",
-        source: skill.source || "",
-        dir: skill.dir || "",
-        content: result.content || "",
-        cnDescription: cnDesc,
-        triggers: [...new Set([...cnTriggers, ...autoTriggers])].slice(0, 15),
-      };
-    } catch (e) {
-      return { ok: false, error: e.message || String(e) };
-    }
-  });
-
-  ipcMain.handle("skills:uninstall", async (_e, { id }) => {
-    const key = String(id || "").trim();
-    if (!key) return { ok: false, error: "missing id" };
-    try {
-      const { loadSkillCatalog, findSkill } = require("../tools/skills");
-      const catalog = await loadSkillCatalog(cfg, cfg.lastWorkspace || "");
-      const skill = findSkill(catalog, key);
-      if (!skill) return { ok: false, error: "skill not found" };
-      // only allow uninstalling user-installed skills (zcode/agents/workspace)
-      if (
-        skill.source === "bundled" ||
-        skill.source === "plugin" ||
-        skill.source === "core"
-      ) {
-        return { ok: false, error: "预装/捆绑/插件技能不可卸载，仅可禁用" };
-      }
-      const dir = skill.dir;
-      if (!dir) return { ok: false, error: "skill dir missing" };
-      // safety: must be under a known skills directory
-      const allowedRoots = [
-        path.join(os.homedir(), ".zcode", "skills"),
-        path.join(os.homedir(), ".agents", "skills"),
-        cfg.lastWorkspace ? path.join(cfg.lastWorkspace, ".emsoder", "skills") : null,
-      ].filter(Boolean).map((r) => path.resolve(r).toLowerCase());
-      const absDir = path.resolve(dir).toLowerCase();
-      const inAllowed = allowedRoots.some((r) => absDir.startsWith(r + path.sep) || absDir === r);
-      if (!inAllowed) {
-        return { ok: false, error: "技能目录不在可卸载范围内" };
-      }
-      await fs.rm(dir, { recursive: true, force: true });
-      // also remove from disabled list
-      const list = (cfg.skillsDisabled || []).filter(
-        (x) => String(x).toLowerCase() !== key.toLowerCase()
-      );
-      cfg.skillsDisabled = list;
-      saveConfig(cfg);
-      try { require("../tools/skills").invalidateSkillCache(); } catch {}
-      // also remove symlink if exists (zcode → agents)
-      try {
-        const zcodeLink = path.join(os.homedir(), ".zcode", "skills", skill.name);
-        const st = await fs.lstat(zcodeLink).catch(() => null);
-        if (st?.isSymbolicLink()) await fs.unlink(zcodeLink);
-      } catch {}
-      return { ok: true, message: `已卸载 ${skill.name}` };
-    } catch (e) {
-      return { ok: false, error: e.message || String(e) };
-    }
-  });
-
-  // ---- Skills install wizard (npx skills add wrapper) ----
-  ipcMain.handle("skills:install-presets", () => {
-    try {
-      const { PRESETS } = require("../tools/skillInstall");
-      return { ok: true, presets: PRESETS };
-    } catch (e) {
-      return { ok: false, error: e.message || String(e), presets: [] };
-    }
-  });
-
-  ipcMain.handle("skills:install", async (event, payload) => {
-    const skillInstall = require("../tools/skillInstall");
-    const sendLog = (line) => {
-      try {
-        event.sender.send("skills:install-log", { line: String(line || "") });
-      } catch {
-        /* window gone */
-      }
-    };
-    try {
-      const result = await skillInstall.runSkillsAdd({
-        repo: payload?.repo,
-        skill: payload?.skill,
-        global: payload?.global !== false,
-        onLog: sendLog,
-      });
-      try {
-        require("../tools/skills").invalidateSkillCache();
-      } catch {
-        /* ignore */
-      }
-      return result;
-    } catch (e) {
-      return {
-        ok: false,
-        code: null,
-        error: e.message || String(e),
-        stdout: "",
-        stderr: "",
-        cmd: "",
-      };
-    }
-  });
-
-  ipcMain.handle("skills:install-cancel", () => {
-    try {
-      return require("../tools/skillInstall").cancelSkillsInstall();
-    } catch (e) {
-      return { ok: false, error: e.message || String(e) };
-    }
-  });
-
-  ipcMain.handle("skills:install-status", () => {
-    try {
-      const { isInstallRunning } = require("../tools/skillInstall");
-      return { ok: true, running: isInstallRunning() };
-    } catch (e) {
-      return { ok: false, running: false, error: e.message || String(e) };
-    }
-  });
-
-  // ---- Long-term memory CRUD ----
-  ipcMain.handle("memory:list", (_e, opts) => {
-    try { return { ok: true, memories: memoryStore?.list(opts || {}) || [] }; }
-    catch (e) { return { ok: false, error: e.message || String(e) }; }
-  });
-  ipcMain.handle("memory:add", (_e, mem) => {
-    try { return { ok: true, memory: memoryStore.add(mem) }; }
-    catch (e) { return { ok: false, error: e.message || String(e) }; }
-  });
-  ipcMain.handle("memory:update", (_e, { id, patch }) => {
-    try { const m = memoryStore.update(id, patch); return m ? { ok: true, memory: m } : { ok: false, error: "not found" }; }
-    catch (e) { return { ok: false, error: e.message || String(e) }; }
-  });
-  ipcMain.handle("memory:remove", (_e, { id }) => {
-    try { return { ok: memoryStore.remove(id) }; }
-    catch (e) { return { ok: false, error: e.message || String(e) }; }
-  });
-  ipcMain.handle("memory:search", (_e, { query, topK }) => {
-    try { return { ok: true, memories: memoryStore.search(query, { topK }) }; }
-    catch (e) { return { ok: false, error: e.message || String(e) }; }
-  });
-  ipcMain.handle("memory:extract-now", async (_e) => {
-    try {
-      const added = await memoryStore.extractFromSession(sessions.getActive(), cfg);
-      return { ok: true, added };
-    } catch (e) { return { ok: false, error: e.message || String(e) }; }
-  });
-  ipcMain.handle("memory:clear", () => {
-    try { memoryStore.clear(); return { ok: true }; }
-    catch (e) { return { ok: false, error: e.message || String(e) }; }
-  });
-
-  // ---- tsconfig / LSP project options ----
-  ipcMain.handle("lsp:tsconfig", async () => {
-    return loadWorkspaceTsconfig(cfg.lastWorkspace || "");
-  });
-
-  // ---- PTY bridge for agent ----
-  ipcMain.handle("pty:set-preferred", (_e, id) => ptyBridge.setPreferred(id));
-  ipcMain.handle("pty:get-preferred", () => ({
-    id: ptyBridge.getPreferred(),
-  }));
-  ipcMain.handle("pty:mirror", (_e, text) => ptyBridge.write(text));
-
-  // ---- Node debugger ----
-  ipcMain.handle("debug:state", () => nodeDebugger.state);
-  ipcMain.handle("debug:launch", async (_e, opts) => {
-    try {
-      return await nodeDebugger.launch({
-        program: opts?.program,
-        args: opts?.args || [],
-        cwd: opts?.cwd || cfg.lastWorkspace || process.cwd(),
-      });
-    } catch (err) {
-      return { ok: false, error: err.message || String(err) };
-    }
-  });
-  ipcMain.handle("debug:stop", async () => nodeDebugger.stop());
-  ipcMain.handle("debug:continue", async () => {
-    try {
-      return await nodeDebugger.continue();
-    } catch (err) {
-      return { ok: false, error: err.message };
-    }
-  });
-  ipcMain.handle("debug:pause", async () => {
-    try {
-      return await nodeDebugger.pause();
-    } catch (err) {
-      return { ok: false, error: err.message };
-    }
-  });
-  ipcMain.handle("debug:step-over", async () => {
-    try {
-      return await nodeDebugger.stepOver();
-    } catch (err) {
-      return { ok: false, error: err.message };
-    }
-  });
-  ipcMain.handle("debug:step-into", async () => {
-    try {
-      return await nodeDebugger.stepInto();
-    } catch (err) {
-      return { ok: false, error: err.message };
-    }
-  });
-  ipcMain.handle("debug:step-out", async () => {
-    try {
-      return await nodeDebugger.stepOut();
-    } catch (err) {
-      return { ok: false, error: err.message };
-    }
-  });
-  ipcMain.handle("debug:evaluate", async (_e, { expression, callFrameId }) => {
-    try {
-      return await nodeDebugger.evaluate(expression, callFrameId);
-    } catch (err) {
-      return { ok: false, error: err.message };
-    }
-  });
-  ipcMain.handle("debug:set-breakpoint", (_e, { path: filePath, line }) =>
-    nodeDebugger.setBreakpoint(filePath, line)
-  );
-  ipcMain.handle("debug:remove-breakpoint", (_e, { path: filePath, line }) =>
-    nodeDebugger.removeBreakpoint(filePath, line)
-  );
-  ipcMain.handle("debug:clear-breakpoints", () => nodeDebugger.clearBreakpoints());
-  ipcMain.handle("debug:list-breakpoints", () => ({
-    breakpoints: nodeDebugger.listBreakpoints(),
-  }));
-
-  // ---- Quest (goal-driven tasks) ----
-  /** quest 对象瘦身：fileChanges 去 before/after 正文（对齐 Chat 模式） */
-  function publicQuest(q) {
-    if (!q) return null;
-    return { ...q, fileChanges: questStore.publicFileChanges(q) };
-  }
-
-  /**
-   * quest 事件发送器：delta 流式文本 80ms 批处理合并，
-   * 其他事件（status/step/done 等）立即发送。
-   */
-  const questDeltaBatch = new Map(); // questId -> { buf, timer }
-  function makeQuestEventSender(questId) {
-    return (ev) => {
-      if (mainWindow?.isDestroyed()) return;
-      if (ev?.type !== "delta") {
-        flushQuestDelta(questId);
-        mainWindow.webContents.send("quest:event", ev);
-        return;
-      }
-      let b = questDeltaBatch.get(questId);
-      if (!b) {
-        b = { buf: "", timer: null };
-        questDeltaBatch.set(questId, b);
-      }
-      b.buf += ev.text || "";
-      if (b.buf.length >= 4096) {
-        flushQuestDelta(questId);
-        return;
-      }
-      if (!b.timer) {
-        b.timer = setTimeout(() => flushQuestDelta(questId), 80);
-      }
-    };
-  }
-  function flushQuestDelta(questId) {
-    const b = questDeltaBatch.get(questId);
-    if (!b) return;
-    questDeltaBatch.delete(questId);
-    if (b.timer) clearTimeout(b.timer);
-    if (b.buf && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("quest:event", {
-        type: "delta",
-        questId,
-        text: b.buf,
-      });
-    }
-  }
-
-  ipcMain.handle("quest:list", () => questStore.list().map((q) => ({
-    id: q.id,
-    title: q.title,
-    goal: q.goal,
-    mode: q.mode,
-    status: q.status,
-    remark: q.remark || "",
-    workspace: q.workspace,
-    model: q.model,
-    progress: q.progress,
-    error: q.error,
-    createdAt: q.createdAt,
-    updatedAt: q.updatedAt,
-    startedAt: q.startedAt,
-    finishedAt: q.finishedAt,
-    stepCount: (q.steps || []).length,
-    changeCount: (q.fileChanges || []).filter((f) => !f.rejected).length,
-  })));
-  ipcMain.handle("quest:board", () => questStore.listByStatus());
-  ipcMain.handle("quest:get", (_e, id) => publicQuest(questStore.get(id)));
-  ipcMain.handle("quest:get-active", () => publicQuest(questStore.getActive()));
-  ipcMain.handle("quest:set-active", (_e, id) => questStore.setActive(id));
-  ipcMain.handle("quest:create", (_e, payload) => {
-    return questStore.create({
-      goal: payload?.goal || "",
-      title: payload?.title,
-      mode: payload?.mode || "agent",
-      workspace: payload?.workspace || cfg.lastWorkspace || "",
-      model: payload?.model || getActiveModel(cfg),
-      providerId: payload?.providerId || cfg.activeProviderId,
-    });
-  });
-  ipcMain.handle("quest:update", (_e, { id, patch }) =>
-    publicQuest(questStore.update(id, patch || {}))
-  );
-  ipcMain.handle("quest:remove", (_e, id) => {
-    if (questRunner.isRunning(id)) questRunner.stop(id);
-    return questStore.remove(id);
-  });
-  ipcMain.handle("quest:start", async (_e, id) => {
-    const qid = id || questStore.activeId;
-    if (!qid) throw new Error("无活动 Quest");
-    // fire and forget — progress via events
-    setImmediate(() => {
-      questStore?.setDebounceMs?.(2000);
-      const restoreDebounce = () => {
-        try { questStore?.setDebounceMs?.(400); } catch { /* ignore */ }
-      };
-      questRunner
-        .start(
-          cfg,
-          qid,
-          {
-            onEvent: (ev) => {
-              if (ev?.type === "done" || ev?.type === "error") restoreDebounce();
-              makeQuestEventSender(qid)(ev);
-            },
-          },
-          {
-            ptyBridge,
-            confirm: (message) => askConfirm(message),
-          }
-        )
-        .catch((err) => {
-          restoreDebounce();
-          if (!mainWindow?.isDestroyed()) {
-            mainWindow.webContents.send("quest:event", {
-              type: "error",
-              questId: qid,
-              error: err.message || String(err),
-            });
-          }
-        });
-    });
-    return { ok: true, id: qid };
-  });
-  ipcMain.handle("quest:stop", (_e, id) => {
-    questRunner.stop(id || questStore.activeId);
-    return { ok: true };
-  });
-  ipcMain.handle("quest:reject-change", async (_e, { id, path: filePath }) => {
-    return questRunner.applyReject(id, filePath);
-  });
-  ipcMain.handle("quest:complete", (_e, id) =>
-    questRunner.markCompleted(id || questStore.activeId)
-  );
-  ipcMain.handle("quest:is-running", (_e, id) =>
-    questRunner.isRunning(id || questStore.activeId)
-  );
-
-  ipcMain.handle("dialog:message", async (_e, opts) => {
-    const r = await dialog.showMessageBox(mainWindow, opts);
-    return r;
-  });
-
-  ipcMain.handle("context:stats", () => {
-    const snap = contextStats.getSnapshot();
-    return {
-      ...snap,
-      labelContext: formatContextLabel(snap),
-      labelCache: formatCacheLabel(snap),
-    };
-  });
-
-  // ---- Config export / import (BYOK backup) ----
-  ipcMain.handle("config:export", async (_e, { redactKeys } = {}) => {
-    const redact = redactKeys !== false;
-    const payload = {
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      activeProviderId: cfg.activeProviderId,
-      activeModel: cfg.activeModel,
-      agentMode: cfg.agentMode,
-      autoRunTools: cfg.autoRunTools,
-      autoApproveSafe: !!cfg.autoApproveSafe,
-      collapseProcess: cfg.collapseProcess !== false,
-      terminalRunMode: cfg.terminalRunMode,
-      commandDenyList: cfg.commandDenyList,
-      maxTokens: cfg.maxTokens,
-      temperature: cfg.temperature,
-      agentMaxRounds: cfg.agentMaxRounds ?? 32,
-      agentAutoContinue: cfg.agentAutoContinue ?? 2,
-      systemPrompt: cfg.systemPrompt,
-      responseLanguage: cfg.responseLanguage,
-      completionEnabled: cfg.completionEnabled,
-      completionDebounceMs: cfg.completionDebounceMs,
-      fontSize: cfg.fontSize,
-      skillsEnabled: cfg.skillsEnabled !== false,
-      skillsIncludeBundled: cfg.skillsIncludeBundled !== false,
-      skillsIncludePlugins: cfg.skillsIncludePlugins !== false,
-      skillsDirs: Array.isArray(cfg.skillsDirs) ? cfg.skillsDirs : [],
-      skillsDisabled: Array.isArray(cfg.skillsDisabled) ? cfg.skillsDisabled : [],
-      providers: getProviders(cfg).map((p) => ({
-        ...p,
-        apiKey: redact
-          ? p.apiKey
-            ? `***${String(p.apiKey).slice(-4)}`
-            : ""
-          : p.apiKey,
-      })),
-    };
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const res = await dialog.showSaveDialog(mainWindow, {
-      title: "导出 EMSoder 配置",
-      defaultPath: "emsoder-config-export.json",
-      filters: [{ name: "JSON", extensions: ["json"] }],
+      title: "导出 EMSoder 日志",
+      defaultPath: `emsoder-log-${ts}.log`,
+      filters: [{ name: "Log", extensions: ["log", "txt"] }],
     });
     if (res.canceled || !res.filePath) return { ok: false, canceled: true };
-    await fs.writeFile(res.filePath, JSON.stringify(payload, null, 2), "utf8");
-    return { ok: true, path: res.filePath, redacted: redact };
+    await fs.writeFile(res.filePath, parts.join("\n\n"), "utf8");
+    logger.info("日志已导出", { path: res.filePath, files: found });
+    return { ok: true, path: res.filePath, files: found };
   });
 
-  ipcMain.handle("config:import", async () => {
-    const res = await dialog.showOpenDialog(mainWindow, {
-      title: "导入 EMSoder 配置",
-      properties: ["openFile"],
-      filters: [{ name: "JSON", extensions: ["json"] }],
-    });
-    if (res.canceled || !res.filePaths?.[0]) return { ok: false, canceled: true };
-    let data;
-    try {
-      data = JSON.parse(await fs.readFile(res.filePaths[0], "utf8"));
-    } catch (e) {
-      return { ok: false, error: "JSON 解析失败: " + (e.message || e) };
-    }
-    if (!data || typeof data !== "object") {
-      return { ok: false, error: "无效配置文件" };
-    }
-    const keep = [
-      "activeProviderId",
-      "activeModel",
-      "agentMode",
-      "autoRunTools",
-      "autoApproveSafe",
-      "collapseProcess",
-      "terminalRunMode",
-      "commandDenyList",
-      "maxTokens",
-      "temperature",
-      "agentMaxRounds",
-      "agentAutoContinue",
-      "systemPrompt",
-      "responseLanguage",
-      "completionEnabled",
-      "completionDebounceMs",
-      "fontSize",
-      "skillsEnabled",
-      "skillsIncludeBundled",
-      "skillsIncludePlugins",
-      "skillsDirs",
-      "skillsDisabled",
-    ];
-    for (const k of keep) {
-      if (data[k] !== undefined) cfg[k] = data[k];
-    }
-    if (Array.isArray(data.providers) && data.providers.length) {
-      const existing = getProviders(cfg);
-      const byId = new Map(existing.map((p) => [p.id, p]));
-      const next = data.providers.map((p) => {
-        const prev = byId.get(p.id);
-        let apiKey = p.apiKey || "";
-        // keep old key if import looks redacted
-        if (
-          prev &&
-          (!apiKey ||
-            String(apiKey).startsWith("***") ||
-            String(apiKey).includes("REPLACE"))
-        ) {
-          apiKey = prev.apiKey || "";
-        }
-        return {
-          id: p.id,
-          name: p.name || p.id,
-          type: p.type === "anthropic" ? "anthropic" : "openai",
-          baseUrl: String(p.baseUrl || "").replace(/\/+$/, ""),
-          apiKey,
-          models: Array.isArray(p.models) ? p.models : [],
-          enabled: p.enabled !== false,
-          headers: p.headers,
-          chatPath: p.chatPath,
-        };
-      });
-      cfg.providers = next;
-    }
-    saveConfig(cfg);
-    return { ok: true, config: publicConfig(cfg) };
+  // ---- Providers ----
+  ipcProviders.register(ipcMain, { cfg, publicConfig, assertTrustedSender });
+
+  ipcMain.handle("workspace:open", (_e, { sessionId } = {}) => openWorkspace(sessionId));
+  ipcMain.handle("workspace:get", (_e, { sessionId } = {}) =>
+    (sessionId && sessions?.getById?.(sessionId)?.workspaceRoot) || sessions?.getActive?.()?.workspaceRoot || cfg.lastWorkspace || ""
+  );
+
+  // ---- MCP ----
+  ipcMcp.register(ipcMain, { cfg, mcpManager, assertTrustedSender });
+
+  /**
+   * 工作区隔离的并行任务池：相同/父子目录串行，不重叠根目录最多 3 个并发。
+   * Job 在提交时冻结 sessionId + workspaceRoot，不读取之后可能变化的 active session。
+   */
+  function emitChatQueueStatus(snapshot = {}) {
+    const win = mainWindow;
+    if (!win || win.isDestroyed()) return;
+    win.webContents.send("agent:event", { type: "queue", ...snapshot });
+  }
+  const chatPool = new WorkspaceTaskPool({
+    maxConcurrent: 3,
+    onChange: (snapshot) => {
+      // 运行中加大写盘防抖，所有并行任务空闲后恢复。
+      sessions?.setDebounceMs?.(snapshot.running ? 2000 : 450);
+      questStore?.setDebounceMs?.(snapshot.running ? 2000 : 450);
+      emitChatQueueStatus(snapshot);
+    },
+  });
+  const chatQueue = {
+    get length() { return chatPool.length; },
+    get isBusy() { return chatPool.isBusy; },
+    enqueue(meta, run) { return chatPool.enqueue({ ...meta, run }).promise; },
+    cancelSession(sessionId, reason) { chatPool.cancelSession(sessionId, reason); },
+    clearQueue(reason) { chatPool.stopAll(reason); },
+    snapshot() { return chatPool.snapshot(); },
+    isSessionBusy(sessionId) { return chatPool.isSessionBusy(sessionId); },
+    emitStatus(extra = {}) { emitChatQueueStatus({ ...chatPool.snapshot(), ...extra }); },
+  };
+
+  /** Shared context passed to every IPC domain module's register(). */
+  const ctx = {
+    cfg,
+    saveConfig,
+    sessions,
+    runner,
+    terminals,
+    ptyBridge,
+    memoryStore,
+    mcpManager,
+    questStore,
+    questRunner,
+    nodeDebugger,
+    dialog,
+    getWindow: () => mainWindow,
+    publicConfig,
+    publicSession,
+    askConfirm,
+    assertTrustedSender,
+    isAllowedFile,
+    assertAllowedDir,
+    registerExternalFiles,
+    openFileDialog,
+    allowClose,
+    chatQueue,
+    cancelAllConfirms,
+    resolveConfirm,
+    completion,
+    syncFloatingBall,
+    applyAudioMute,
+    showMainWindow: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    },
+  };
+
+  // ---- App state / lifecycle ----
+  ipcApp.register(ipcMain, ctx);
+
+  // ---- Config (get / provider-presets / update / export / import) ----
+  ipcConfig.register(ipcMain, ctx);
+
+  // ---- Filesystem ----
+  ipcFs.register(ipcMain, ctx);
+
+  // ---- Sessions (list / compress / branch-edit / switch-branch / etc) ----
+  ipcSession.register(ipcMain, ctx);
+
+  // ---- Agent (send / stop / queue / file-changes / confirm / inline-edit / complete / commit-message) ----
+  ipcAgent.register(ipcMain, ctx);
+
+  // ---- Native dialog ----
+  ipcDialog.register(ipcMain, ctx);
+
+  // ---- Git ----
+  ipcGit.register(ipcMain, { cfg, dialog, getWindow: () => mainWindow });
+
+  // ---- Terminal (real PTY) ----
+  ipcTerminal.register(ipcMain, { cfg, terminals });
+
+  // ---- Rules ----
+  ipcRules.register(ipcMain, { cfg });
+
+  // ---- Skills (zcode / agents SKILL.md) ----
+  ipcSkills.register(ipcMain, { cfg });
+
+  // ---- Long-term memory CRUD ----
+  ipcMemory.register(ipcMain, { cfg, sessions, memoryStore });
+
+  // ---- tsconfig / LSP project options + context stats ----
+  ipcContext.register(ipcMain, { cfg });
+
+  // ---- PTY bridge for agent ----
+  ipcPty.register(ipcMain, { ptyBridge });
+
+  // ---- Node debugger ----
+  ipcDebugger.register(ipcMain, { cfg, nodeDebugger });
+
+  // ---- Quest (goal-driven tasks) ----
+  ipcQuest.register(ipcMain, {
+    cfg,
+    questStore,
+    questRunner,
+    getWindow: () => mainWindow,
+    ptyBridge,
+    askConfirm,
   });
 
   // ---- Dirty draft recovery ----
-  ipcMain.handle("drafts:save", (_e, drafts) => {
-    try {
-      const p = draftsPath();
-      fsSync.mkdirSync(path.dirname(p), { recursive: true });
-      const list = Array.isArray(drafts) ? drafts.slice(0, 30) : [];
-      const tmp = p + ".tmp";
-      fsSync.writeFileSync(
-        tmp,
-        JSON.stringify({ savedAt: Date.now(), drafts: list }, null, 2),
-        "utf8"
-      );
-      fsSync.renameSync(tmp, p);
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, error: e.message || String(e) };
-    }
-  });
-
-  ipcMain.handle("drafts:load", () => {
-    try {
-      const p = draftsPath();
-      if (!fsSync.existsSync(p)) return { drafts: [] };
-      const data = JSON.parse(fsSync.readFileSync(p, "utf8"));
-      return { drafts: Array.isArray(data.drafts) ? data.drafts : [], savedAt: data.savedAt };
-    } catch {
-      return { drafts: [] };
-    }
-  });
-
-  ipcMain.handle("drafts:clear", () => {
-    try {
-      const p = draftsPath();
-      if (fsSync.existsSync(p)) fsSync.unlinkSync(p);
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, error: e.message || String(e) };
-    }
-  });
+  ipcDrafts.register(ipcMain, {});
 }
 
-function askConfirm(message) {
+/** Resolve a pending agent confirm by id (agent:confirm-response). */
+function resolveConfirm(id, allow) {
+  const entry = pendingConfirms.get(id);
+  if (entry) {
+    pendingConfirms.delete(id);
+    const t = pendingConfirmTimers.get(id);
+    if (t) {
+      clearTimeout(t);
+      pendingConfirmTimers.delete(id);
+    }
+    entry.answer(!!allow);
+  }
+}
+
+/** Release pending confirms globally, or only those owned by one session. */
+function cancelAllConfirms(sessionId = null) {
+  for (const [id, entry] of pendingConfirms) {
+    if (sessionId && entry.sessionId !== sessionId) continue;
+    pendingConfirms.delete(id);
+    const t = pendingConfirmTimers.get(id);
+    if (t) {
+      clearTimeout(t);
+      pendingConfirmTimers.delete(id);
+    }
+    try {
+      entry.answer(false);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/** Mark app as quitting and destroy the main window (app:allow-close). */
+function allowClose() {
+  isQuitting = true;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.destroy();
+  }
+}
+
+function askConfirm(message, meta = {}) {
   return new Promise((resolve) => {
     const id = `c_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    pendingConfirms.set(id, resolve);
-    mainWindow?.webContents.send("agent:confirm", { id, message });
+    const onAnswer = (answer) => {
+      const t = pendingConfirmTimers.get(id);
+      if (t) {
+        clearTimeout(t);
+        pendingConfirmTimers.delete(id);
+      }
+      resolve(answer);
+    };
+    pendingConfirms.set(id, { answer: onAnswer, sessionId: meta.sessionId || null, taskId: meta.taskId || null, workspaceRoot: meta.workspaceRoot || "" });
+    mainWindow?.webContents.send("agent:confirm", { id, message, sessionId: meta.sessionId || null, taskId: meta.taskId || null, workspaceRoot: meta.workspaceRoot || "" });
     // safety timeout 5 min
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       if (pendingConfirms.has(id)) {
         pendingConfirms.delete(id);
+        pendingConfirmTimers.delete(id);
         resolve(false);
       }
     }, 5 * 60 * 1000);
+    pendingConfirmTimers.set(id, timer);
   });
 }
 
-/** strip nothing critical — keys stay local; UI needs them for editing */
+const IMAGE_GEN_BACKENDS = new Set([
+  "modelscope", "zhipu", "openai", "openrouter", "siliconflow",
+  "volcengine", "qwen", "minimax",
+]);
+function normalizeImageGenBackend(value) {
+  const backend = String(value || "").trim().toLowerCase();
+  return IMAGE_GEN_BACKENDS.has(backend) ? backend : "modelscope";
+}
+
+/** Strip sensitive keys; renderer gets only presence flags for image/search credentials. */
 function publicConfig(c) {
   return {
     activeProviderId: c.activeProviderId,
     activeModel: getActiveModel(c),
-    providers: getProviders(c),
-    agentMode: c.agentMode !== false,
-    autoRunTools: !!c.autoRunTools,
-    autoApproveSafe: !!c.autoApproveSafe,
+    keylessFallbackEnabled: c.keylessFallbackEnabled === true,
+    providers: (Array.isArray(c.providers) ? c.providers : []).map(publicProvider),
+    agentBackend: c.agentBackend === "pi" ? "pi" : "emsoder",
+    agentMode: true,
+    permissionMode: normalizePermissionMode(c),
     collapseProcess: c.collapseProcess !== false,
     terminalRunMode: c.terminalRunMode || "askEveryTime",
     commandDenyList: c.commandDenyList || "",
-    maxTokens: c.maxTokens ?? 8192,
+    // Values remain main-process-only; renderer only learns configured names.
+    executionEnvKeys: Object.keys(c.executionEnv || {}).sort(),
+    maxTokens: c.maxTokens ?? 0,
     temperature: c.temperature ?? 0.2,
-    agentMaxRounds: c.agentMaxRounds ?? 32,
+    reasoningEffort: (() => {
+      const s = String(c.reasoningEffort || "medium").toLowerCase();
+      return ["off", "low", "medium", "high", "ultra"].includes(s) ? s : "medium";
+    })(),
+    agentMaxRounds: c.agentMaxRounds ?? 0,
     agentAutoContinue:
       c.agentAutoContinue === false || c.agentAutoContinue === 0
         ? 0
-        : c.agentAutoContinue ?? 2,
+        : c.agentAutoContinue ?? -1,
+    runMode: c.runMode === "plan" || c.runMode === "goal" ? c.runMode : "auto",
     systemPrompt: c.systemPrompt || "",
     responseLanguage: c.responseLanguage || "zh-cn",
     theme: c.theme || "sky-dark",
@@ -2041,27 +939,44 @@ function publicConfig(c) {
     skillsDisabled: Array.isArray(c.skillsDisabled) ? c.skillsDisabled : [],
     memoriesEnabled: c.memoriesEnabled === true,
     memoriesMaxCount: c.memoriesMaxCount ?? 500,
-    mcpServers: Array.isArray(c.mcpServers) ? c.mcpServers : [],
+    mcpServers: (Array.isArray(c.mcpServers) ? c.mcpServers : []).map(publicMcp),
     wordWrap: c.wordWrap || "off",
     minimap: !!c.minimap,
     contextWindow: c.contextWindow || 0,
     modelContextWindows: c.modelContextWindows || {},
+    autoCompressAt: c.autoCompressAt ?? 80,
+    soundEnabled: c.soundEnabled !== false,
+    soundVolume: c.soundVolume ?? 1.0,
+    floatingBallEnabled: c.floatingBallEnabled === true,
+    imageProvider: c.imageProvider === "unsplash" ? "unsplash" : "pexels",
+    // Key 脱敏：渲染层只需知道是否已配置，不回传明文
+    pexelsApiKeySet: !!(c.pexelsApiKey && String(c.pexelsApiKey).trim()),
+    unsplashApiKeySet: !!(c.unsplashApiKey && String(c.unsplashApiKey).trim()),
+    imageGenBackend: normalizeImageGenBackend(c.imageGenBackend),
+    imageGenModel: c.imageGenModel || "",
+    imageGenBaseUrl: c.imageGenBaseUrl || "",
+    imageGenApiKeySet: !!(c.imageGenApiKey && String(c.imageGenApiKey).trim()),
     providerName: getActiveProvider(c)?.name || "none",
   };
 }
 
 if (gotLock) {
   process.on("uncaughtException", (err) => {
-    console.error("uncaughtException", err);
+    logger.error("uncaughtException", err);
   });
   process.on("unhandledRejection", (err) => {
-    console.error("unhandledRejection", err);
+    logger.error("unhandledRejection", err);
   });
 
   app.whenReady().then(() => {
     nativeTheme.themeSource = "dark";
     // Config only (sync, light) → paint window ASAP. Heavy stores after.
     cfg = loadConfig();
+    logger.info("EMSoder 启动", {
+      version: app.getVersion?.(),
+      userData: app.getPath?.("userData"),
+      logFile: logger.logPath(),
+    });
     createWindow();
 
     sessions = new SessionStore();
@@ -2075,6 +990,10 @@ if (gotLock) {
     mcpManager.startAll(cfg);
     memoryStore = new MemoryStore(cfg);
     runner = new AgentRunner(sessions, memoryStore, mcpManager);
+    const legacyRunner = runner;
+    if (cfg.agentBackend === "pi") {
+      runner = new PiRunnerAdapter(sessions, legacyRunner, mcpManager);
+    }
     questStore = new QuestStore();
     questRunner = new QuestRunner(questStore, memoryStore, mcpManager);
     // 崩溃恢复：上次异常退出可能留下 running 状态的 quest，重启后复位为 error
@@ -2122,12 +1041,42 @@ if (gotLock) {
     );
     registerIpc();
 
+    // 桌面悬浮球：按配置开关
+    try { syncFloatingBall(); } catch { /* ignore */ }
+
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
   });
 
   app.on("before-quit", () => {
+    logger.info("EMSoder 退出");
+    // 先停 Agent/Quest/调试器，再 flush 持久化，避免退出瞬间仍有写入造成竞态丢数据
+    try {
+      runner?.stop?.();
+    } catch {
+      /* ignore */
+    }
+    try {
+      runner?.close?.();
+    } catch {
+      /* ignore */
+    }
+    try {
+      questRunner?.stopAll?.();
+    } catch {
+      /* ignore */
+    }
+    try {
+      mcpManager?.stopAll?.();
+    } catch {
+      /* ignore */
+    }
+    try {
+      nodeDebugger?.stop?.();
+    } catch {
+      /* ignore */
+    }
     try {
       sessions?.flush?.();
     } catch {
@@ -2140,21 +1089,6 @@ if (gotLock) {
     }
     try {
       questStore?.flush?.();
-    } catch {
-      /* ignore */
-    }
-    try {
-      runner?.stop?.();
-    } catch {
-      /* ignore */
-    }
-    try {
-      questRunner?.stopAll?.();
-    } catch {
-      /* ignore */
-    }
-    try {
-      mcpManager?.stopAll?.();
     } catch {
       /* ignore */
     }

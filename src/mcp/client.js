@@ -48,6 +48,7 @@ class McpStdioClient {
     this._tools = null;
     this._stderrBuf = "";
     this._exiting = false;
+    this._childGen = 0;
   }
 
   _setStatus(status, error = "") {
@@ -104,9 +105,12 @@ class McpStdioClient {
         clearTimeout(timeout);
         fail(`无法启动 ${cmd}: ${e.message}`);
       });
+      // 代际计数：只处理本次 spawn 的子进程退出，
+      // 防止 stop() 后迟到的 exit 事件清掉新 child 引用或把状态翻成 error
+      const gen = ++this._childGen;
       child.on("exit", (code, signal) => {
         clearTimeout(timeout);
-        if (this._exiting) return;
+        if (this._exiting || gen !== this._childGen) return;
         this._failAll("server 退出");
         this._setStatus("error", `进程退出 (${signal || code})`);
         this.child = null;
@@ -151,8 +155,11 @@ class McpStdioClient {
     }
     if (!msg || typeof msg !== "object") return;
 
-    // 服务端主动通知（notifications / 响应）
-    if (msg.id !== undefined && msg.id !== null) {
+    // 区分三类 JSON-RPC 消息：
+    // 1) 带 id + method → 服务端请求（如 roots/list），不是本客户端的响应
+    // 2) 带 id 且无 method → 响应（result/error）
+    // 3) 无 id → 通知
+    if (msg.id !== undefined && msg.id !== null && !msg.method) {
       const pending = this._pending.get(String(msg.id));
       if (!pending) return;
       this._pending.delete(String(msg.id));
@@ -162,11 +169,32 @@ class McpStdioClient {
       } else {
         pending.resolve(msg.result);
       }
-    } else if (msg.method === "notifications/tools/list_changed") {
+      return;
+    }
+    if (msg.method === "notifications/tools/list_changed") {
       this.refreshTools().catch(() => { /* ignore */ });
       try {
         this.opts.onToolsChange?.();
       } catch { /* ignore */ }
+      return;
+    }
+    // 服务端请求：本实现不支持采样/roots，回 method-not-found 避免服务端挂起
+    if (msg.method && msg.id !== undefined && msg.id !== null) {
+      this._safeWrite(JSON.stringify({
+        jsonrpc: "2.0",
+        id: msg.id,
+        error: { code: -32601, message: `method not found: ${msg.method}` },
+      }) + "\n");
+    }
+  }
+
+  _safeWrite(data) {
+    if (!this.child || !this.child.stdin || !this.child.stdin.writable) return false;
+    try {
+      this.child.stdin.write(data);
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -182,13 +210,17 @@ class McpStdioClient {
       }, timeoutMs);
       this._pending.set(String(id), { resolve, reject, timer, method });
       const payload = { jsonrpc: "2.0", id, method, params };
-      this.child.stdin.write(JSON.stringify(payload) + "\n");
+      if (!this._safeWrite(JSON.stringify(payload) + "\n")) {
+        this._pending.delete(String(id));
+        clearTimeout(timer);
+        reject(new Error("MCP server 已断开"));
+      }
     });
   }
 
   _notify(method, params) {
     if (!this.child) return;
-    this.child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
+    this._safeWrite(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
   }
 
   _failAll(msg) {
@@ -241,6 +273,7 @@ class McpStdioClient {
 
   stop() {
     this._exiting = true;
+    this._childGen++;
     this._kill();
     this._failAll("已停止");
     this._setStatus("stopped");
@@ -263,6 +296,43 @@ class McpStdioClient {
       }
     } catch { /* ignore */ }
   }
+}
+
+/**
+ * 解析 SSE 文本为事件列表（符合 WHATWG SSE 规范子集）：
+ * - 空行分隔事件块
+ * - 事件可有 `event:` 字段与一至多行 `data:`（多行 data 用 \n 拼接）
+ * - `:` 开头为注释，忽略
+ * - id:/retry: 等字段不参与本客户端逻辑，忽略
+ */
+function parseSseEvents(text) {
+  const events = [];
+  let cur = null;
+  for (const rawLine of String(text || "").split(/\r?\n/)) {
+    const line = rawLine.trimEnd();
+    if (line === "") {
+      if (cur) {
+        if (cur.data !== "") events.push(cur);
+        cur = null;
+      }
+      continue;
+    }
+    if (line.startsWith(":")) continue; // 注释
+    if (line.startsWith("event:")) {
+      if (!cur) cur = { event: "", data: "" };
+      cur.event = line.slice(6).trim();
+      continue;
+    }
+    if (line.startsWith("data:")) {
+      if (!cur) cur = { event: "", data: "" };
+      // SSE 规范：data: 后紧跟的一个空格会被移除
+      cur.data += (cur.data ? "\n" : "") + line.slice(5).replace(/^ /, "");
+      continue;
+    }
+    // 其余字段行（id: / retry: 等）忽略
+  }
+  if (cur && cur.data !== "") events.push(cur);
+  return events;
 }
 
 /**
@@ -356,15 +426,42 @@ class McpHttpClient {
       if (!resp.ok) {
         throw new Error(`HTTP ${resp.status}: ${text.slice(0, 300)}`);
       }
+      const wantId = payload.id;
       if (/text\/event-stream/i.test(ctype)) {
-        // 从 SSE 流里提取最后一个 event: message 的 data
-        let data = "";
-        for (const line of text.split(/\r?\n/)) {
-          if (line.startsWith("data:")) data = line.slice(5).trim();
+        // SSE：解析全部事件（progress 通知、ping 等与最终响应混流），
+        // 只认与请求 id 匹配的 result/error 响应，其余事件忽略
+        for (const ev of parseSseEvents(text)) {
+          let msg;
+          try {
+            msg = JSON.parse(ev.data);
+          } catch {
+            continue; // 非 JSON 事件（ping 等）跳过
+          }
+          if (!msg || typeof msg !== "object") continue;
+          if (
+            wantId !== undefined &&
+            msg.id !== undefined &&
+            String(msg.id) === String(wantId) &&
+            (msg.error || "result" in msg)
+          ) {
+            return msg;
+          }
         }
-        return data ? JSON.parse(data) : null;
+        return null; // 流内没有本请求的响应（纯通知流）
       }
-      return text ? JSON.parse(text) : null;
+      // 普通 JSON 响应：校验 id 匹配，防止乱序/串包把别的响应当自己的
+      const msg = text ? JSON.parse(text) : null;
+      if (
+        msg &&
+        wantId !== undefined &&
+        msg.id !== undefined &&
+        String(msg.id) !== String(wantId)
+      ) {
+        throw new Error(
+          `JSON-RPC id 不匹配（期望 ${wantId}，收到 ${msg.id}）`
+        );
+      }
+      return msg;
     } catch (e) {
       if (e?.name === "AbortError") {
         throw new Error(`请求超时（${Math.round(timeoutMs / 1000)}s）`);
@@ -381,6 +478,9 @@ class McpHttpClient {
       { jsonrpc: "2.0", id, method, params },
       timeoutMs || this._timeout()
     );
+    if (res === null || res === undefined) {
+      throw new Error(`${method} 无响应（服务端未返回匹配的 result）`);
+    }
     if (res?.error) {
       throw new Error(res.error.message || "JSON-RPC error");
     }
@@ -388,9 +488,8 @@ class McpHttpClient {
   }
 
   _notify(method, params) {
-    // 通知类请求：发送后忽略响应（可能 202/204 或空）
-    const id = ++this._reqId;
-    this._post({ jsonrpc: "2.0", id, method, params }, this._timeout()).catch(
+    // JSON-RPC 通知规范：不带 id，服务端不应返回响应
+    this._post({ jsonrpc: "2.0", method, params }, this._timeout()).catch(
       () => { /* ignore */ }
     );
   }

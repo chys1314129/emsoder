@@ -1,0 +1,10 @@
+{
+  "name": "emsoder-release-skill-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Clean Windows skill CLI dependencies for CI packaging, no account credentials",
+  "dependencies": {
+    "firecrawl-cli": "1.23.3",
+    "mmx-cli": "1.0.25"
+  }
+}

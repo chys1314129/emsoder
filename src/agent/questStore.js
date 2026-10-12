@@ -2,13 +2,14 @@ const fs = require("fs");
 const path = require("path");
 const { randomUUID } = require("crypto");
 const { app } = require("electron");
+const { clipChangeBodies } = require("./fileChanges");
 
 function questsPath() {
   return path.join(app.getPath("userData"), "emsoder-quests.json");
 }
 
 /**
- * Quest task statuses aligned with Qoder-style board:
+ * Quest task statuses:
  * draft | running | action_required | ready | error | completed | cancelled
  */
 const SAVE_DEBOUNCE_MS = 400;
@@ -74,6 +75,21 @@ class QuestStore {
       fs.renameSync(tmp, p);
     } catch (e) {
       console.error("quest save", e);
+      // rename 失败（杀软占用等）时直接覆盖写，避免整个 quests 数据丢失
+      try {
+        const p = questsPath();
+        fs.mkdirSync(path.dirname(p), { recursive: true });
+        fs.writeFileSync(
+          p,
+          JSON.stringify({
+            activeId: this.activeId,
+            quests: this.list().slice(0, MAX_QUESTS),
+          }),
+          "utf8"
+        );
+      } catch (e2) {
+        console.error("quest save fallback", e2);
+      }
     }
   }
 
@@ -279,27 +295,15 @@ class QuestStore {
     if (!q || !filePath) return null;
     const row = (q.fileChanges || []).find((f) => f.path === filePath);
     if (!row) return null;
-    const cap = Math.max(4_000, Number(maxChars) || 120_000);
-    const half = Math.floor(cap / 2);
-    const clip = (s) => {
-      if (s == null) return { text: s, truncated: false };
-      const t = String(s);
-      if (t.length <= half) return { text: t, truncated: false };
-      return {
-        text: t.slice(0, half) + `\n…(截断，原长 ${t.length})`,
-        truncated: true,
-      };
-    };
-    const b = clip(row.before);
-    const a = clip(row.after);
+    const c = clipChangeBodies(row, maxChars);
     return {
       path: row.path,
       relative: row.relative || row.path,
       kind: row.kind || "edit",
       rejected: !!row.rejected,
-      before: b.text,
-      after: a.text,
-      truncated: !!(b.truncated || a.truncated),
+      before: c.before,
+      after: c.after,
+      truncated: c.truncated,
     };
   }
 

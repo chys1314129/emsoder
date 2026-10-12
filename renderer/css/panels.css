@@ -28,7 +28,7 @@
   gap: 6px;
   height: 30px;
   padding: 0 8px;
-  background: #0c1626;
+  background: var(--bg-title);
   border-bottom: 1px solid var(--border-soft);
 }
 
@@ -75,7 +75,7 @@
   height: var(--bottom-height, 220px);
   min-height: 36px;
   border-top: none;
-  background: #0a1422;
+  background: var(--bg-panel);
   display: flex;
   flex-direction: column;
 }
@@ -152,7 +152,7 @@ body.row-resizing .xterm-host {
   align-items: center;
   gap: 2px;
   padding: 0 6px;
-  background: #0c1626;
+  background: var(--bg-title);
   border-bottom: 1px solid var(--border-soft);
 }
 
@@ -209,7 +209,7 @@ body.row-resizing .xterm-host {
   flex: 1;
   min-height: 0;
   padding: 4px 6px 6px;
-  background: #070e18;
+  background: var(--bg-code);
   overflow: hidden;
 }
 
@@ -230,9 +230,9 @@ body.row-resizing .xterm-host {
   font-family: var(--mono);
   font-size: 12.5px;
   line-height: 1.45;
-  color: #cfe3f7;
+  color: var(--text);
   white-space: pre-wrap;
-  background: #070e18;
+  background: var(--bg-code);
 }
 
 /* Git */
@@ -362,9 +362,9 @@ body.row-resizing .xterm-host {
   font-family: var(--mono);
   font-size: 12px;
   line-height: 1.45;
-  color: #b7c9df;
+  color: var(--text-secondary);
   white-space: pre;
-  background: #070e18;
+  background: var(--bg-code);
   user-select: text;
 }
 
@@ -481,8 +481,8 @@ body.row-resizing .xterm-host {
   margin: 0;
   padding: 8px 10px;
   overflow: auto;
-  background: #070e18;
-  color: #cfe3f7;
+  background: var(--bg-code);
+  color: var(--text);
   font-family: var(--mono);
   font-size: 12px;
   white-space: pre-wrap;

@@ -214,6 +214,22 @@ async function main() {
     sessions.clearFileChanges(sessions.session.id);
     assert(sessions.session.fileChanges.length === 0, "accept clears list");
     assert((await fs.readFile(path.join(root, "a.txt"), "utf8")) === "accepted", "accept does not modify disk");
+
+    const { looksLikeNeedsContinue, looksLikeFinished, looksLikeHandoff } = require("../src/agent/fileChanges");
+    assert(looksLikeNeedsContinue("先到这里，等你确认后再继续后面的步骤。"), "detects 先到这里");
+    assert(looksLikeNeedsContinue("I will stop here for now. Let me know if you want me to continue."), "detects stop here for now");
+    assert(looksLikeNeedsContinue("这部分先改完，其余的可以等你说一声。"), "detects 其余的可以");
+    assert(looksLikeNeedsContinue("第一步完成了，接下来改 auth。"), "detects 接下来");
+    assert(!looksLikeNeedsContinue("已改完 login.js，测试通过。"), "finished work is not continue");
+    assert(looksLikeFinished("已改完 login.js，测试通过。"), "detects finished summary");
+    assert(looksLikeFinished("任务已完成，没有剩余步骤。"), "detects 任务已完成");
+    assert(looksLikeFinished("改完了，你可以自己跑一下测试。"), "done plus test handoff is finished");
+    assert(!looksLikeFinished("先到这里，等你确认后再继续后面的步骤。"), "waiting is not finished");
+    assert(looksLikeHandoff("改完了，你可以自己跑一下测试。"), "detects handoff");
+    assert(looksLikeHandoff("你可以自己跑一下测试。"), "bare test handoff");
+    assert(!looksLikeFinished("你可以自己跑一下测试。"), "bare handoff is not finished");
+    assert(!looksLikeHandoff(""), "empty reply is not handoff");
+    assert(!looksLikeHandoff("这个函数你可以这样写。"), "plain advice is not handoff");
   } finally {
     try {
       await fs.rm(root, { recursive: true, force: true });

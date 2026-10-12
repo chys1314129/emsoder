@@ -440,7 +440,58 @@ async function loadSkillContent(catalog, nameOrId, relFile = "", opts = {}) {
     `File: ${fileRel || "SKILL.md"}`,
     "",
   ].join("\n");
-  return { ok: true, content: header + text, skill };
+  // When loading the main SKILL.md, append a run hint so the model runs the
+  // skill's own scripts correctly even though the skill lives outside the
+  // workspace (e.g. on C: while the project is on D:). EMSoder already allows
+  // read/run inside installed skill dirs; the model just needs absolute paths.
+  let runHint = "";
+  if (!fileRel) {
+    runHint = await buildSkillRunHint(skill);
+  }
+  return { ok: true, content: header + runHint + text, skill };
+}
+
+/**
+ * Build a short "how to run this skill" note: absolute skill dir, a scripts/
+ * dir if present, and the convention to cd into the script's folder so its
+ * sibling imports (e.g. `from console_encoding import ...`) resolve.
+ */
+async function buildSkillRunHint(skill) {
+  const bits = [];
+  const scriptsDir = path.join(skill.dir, "scripts");
+  let hasScripts = false;
+  try {
+    hasScripts = (await fs.stat(scriptsDir)).isDirectory();
+  } catch {
+    hasScripts = false;
+  }
+  bits.push("── EMSoder 运行提示 ──");
+  bits.push(
+    "该技能安装在工作区之外，但 EMSoder 允许在技能目录内读取和运行脚本。"
+  );
+  bits.push(`技能根目录（绝对路径）: ${skill.dir}`);
+  if (hasScripts) {
+    bits.push(`脚本目录: ${scriptsDir}`);
+    bits.push(
+      "运行脚本时用 run_terminal，并把 cwd 设为脚本所在目录（否则脚本内 `from xxx import ...` 的同级模块会找不到）。"
+    );
+    bits.push(
+      "示例：run_terminal({ command: \"python <脚本名>.py …\", cwd: \"" +
+        scriptsDir +
+        "\" })"
+    );
+  } else {
+    bits.push(
+      "运行脚本时用 run_terminal，cwd 设为技能根目录或脚本所在目录；引用脚本请用上面的绝对路径。"
+    );
+  }
+  bits.push(
+    "已内置便携 python/node（PATH 已注入），并已设 PYTHONUTF8=1，中文输出不会因编码崩溃。"
+  );
+  bits.push("产物请写回工作区（如 exports/），不要写到技能目录里。");
+  bits.push("──────────────────");
+  bits.push("");
+  return bits.join("\n") + "\n";
 }
 
 async function listSkillFiles(catalog, nameOrId, maxEntries = 40) {

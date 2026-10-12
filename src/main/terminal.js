@@ -105,10 +105,10 @@ function defaultShell() {
   return { file: shell, args: ["-l"] };
 }
 
-function buildEnv(workspaceRoot) {
+function buildEnv(workspaceRoot, executionEnv = {}) {
   let baseEnv = { ...process.env };
   try {
-    baseEnv = require("../tools/skillRuntime").augmentProcessEnv(baseEnv);
+    baseEnv = require("../tools/skillRuntime").augmentProcessEnv(baseEnv, executionEnv);
   } catch {
     /* optional */
   }
@@ -158,7 +158,7 @@ class TerminalManager extends EventEmitter {
     };
   }
 
-  create(workspaceRoot, size = {}) {
+  create(workspaceRoot, size = {}, executionEnv = {}) {
     const id = `t_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const cwd = workspaceRoot || process.cwd();
     const cols = Math.max(20, Number(size.cols) || 80);
@@ -170,7 +170,7 @@ class TerminalManager extends EventEmitter {
       if (ptyLoadError) resetPtyCache();
       const nodePty = loadPty();
       const shell = defaultShell();
-      const env = buildEnv(workspaceRoot);
+      const env = buildEnv(workspaceRoot, executionEnv);
       const opts = {
         name: "xterm-256color",
         cols,

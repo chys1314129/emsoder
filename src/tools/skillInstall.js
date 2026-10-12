@@ -5,6 +5,7 @@
 const { spawn } = require("child_process");
 const os = require("os");
 const path = require("path");
+const logger = require("../core/logger");
 
 /** @type {import('child_process').ChildProcess | null} */
 let activeChild = null;
@@ -143,6 +144,7 @@ function runSkillsAdd(opts) {
 
   const cmdPreview = `npx ${args.join(" ")}`;
   const onLog = typeof opts.onLog === "function" ? opts.onLog : () => {};
+  logger.info("skill install 开始", { repo: repoArg, skill: skillP.name || "", global: opts.global !== false });
 
   return new Promise((resolve) => {
     const isWin = process.platform === "win32";
@@ -215,6 +217,7 @@ function runSkillsAdd(opts) {
       } catch {
         /* ignore */
       }
+      logger[ok ? "info" : "warn"](`skill install ${ok ? "成功" : "失败"}`, { repo: repoArg, exitCode: code });
       resolve({
         ok,
         code,

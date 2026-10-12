@@ -85,9 +85,7 @@ class NodeDebugger extends EventEmitter {
     const absProg = path.resolve(cwd || process.cwd(), program);
     if (!fs.existsSync(absProg)) throw new Error(`文件不存在: ${absProg}`);
 
-    const nodeBin = nodePath || process.execPath.includes("electron")
-      ? "node"
-      : process.execPath;
+    const nodeBin = nodePath || (process.execPath.includes("electron") ? "node" : process.execPath);
     // Prefer system node for debuggee; electron binary is not ideal for user scripts
     const exe = process.platform === "win32" ? resolveNodeWindows(nodeBin) : nodeBin;
 
@@ -120,6 +118,17 @@ class NodeDebugger extends EventEmitter {
       const timer = setTimeout(() => {
         reject(new Error("等待 Inspector WebSocket 超时"));
       }, 8000);
+      const fail = (err) => {
+        clearTimeout(timer);
+        // 启动失败必须回收子进程，否则残留 --inspect-brk 进程占端口/CPU
+        try {
+          if (this.child && !this.child.killed) this.child.kill("SIGKILL");
+        } catch { /* ignore */ }
+        this.child = null;
+        this.running = false;
+        this.paused = false;
+        reject(err);
+      };
 
       const onData = (buf) => {
         const text = buf.toString();
@@ -139,8 +148,7 @@ class NodeDebugger extends EventEmitter {
         this.emit("output", { stream: "stdout", text: b.toString() });
       });
       this.child.on("error", (err) => {
-        clearTimeout(timer);
-        reject(err);
+        fail(err);
       });
       const onChildEnd = (code, signal) => {
         this.running = false;
@@ -477,6 +485,9 @@ class NodeDebugger extends EventEmitter {
         if (process.platform === "win32") {
           spawn("taskkill", ["/pid", String(this.child.pid), "/f", "/t"], {
             windowsHide: true,
+            stdio: "ignore",
+          }).on("error", () => {
+            /* taskkill 失败时静默，进程退出时由 onExit 兜底 */
           });
         } else {
           this.child.kill("SIGTERM");

@@ -296,7 +296,7 @@ declare function clearImmediate(id: any): void;
       // 并行读文件（并发 8），串行建模型
       await mapLimit(sorted, 8, async (f) => {
         const lang = languageOf(f.path);
-        if (!lang || lang === "json") return;
+        if (!lang) return;
         try {
           // skip if already open with model
           if (state.models.has(normalizePath(f.path))) {
@@ -341,8 +341,20 @@ declare function clearImmediate(id: any): void;
 
   function rememberOpenFile(filePath, content) {
     const lang = languageOf(filePath);
-    if (!lang || lang === "json") return;
+    if (!lang) return;
     ensureModel(filePath, content, lang);
+  }
+
+  /** 标签页关闭后从 LSP 索引移除该文件（模型已在 editor-host 释放） */
+  function forgetFile(filePath) {
+    const key = normalizePath(filePath);
+    const model = state.models.get(key);
+    if (model) {
+      try {
+        model.dispose();
+      } catch { /* ignore */ }
+      state.models.delete(key);
+    }
   }
 
   function updateOpenFile(filePath, content) {
@@ -416,6 +428,7 @@ declare function clearImmediate(id: any): void;
     disposeIndexedModels,
     applyWorkspaceTsconfig,
     rememberOpenFile,
+    forgetFile,
     updateOpenFile,
     installEditorActions,
     setProblemsHandler,

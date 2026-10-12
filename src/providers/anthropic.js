@@ -67,6 +67,30 @@ function toAnthropicTools(tools) {
   }));
 }
 
+/** Anthropic extended thinking：优先用 Pi 传入的动态预算，否则按档位默认 */
+function applyAnthropicThinking(body, req) {
+  const effort = String(req.reasoningEffort || "").toLowerCase().trim();
+  if (!effort || effort === "off" || effort === "none") return;
+  const budgets = {
+    low: 1024,
+    medium: 4096,
+    high: 10000,
+    ultra: 32000,
+  };
+  // Pi 完整映射：动态 token 预算优先（来自上下文窗口比例），档位表兜底
+  const budget =
+    req.thinkingBudget && Number(req.thinkingBudget) > 0
+      ? Math.floor(Number(req.thinkingBudget))
+      : budgets[effort];
+  if (!budget) return;
+  // max_tokens 必须大于 thinking budget
+  const maxTokens = Math.max(Number(body.max_tokens) || 0, budget + 1024);
+  body.max_tokens = maxTokens;
+  body.thinking = { type: "enabled", budget_tokens: budget };
+  // Anthropic：开启 thinking 时 temperature 必须为 1（或不传）；否则 400
+  body.temperature = 1;
+}
+
 async function* streamAnthropicChat(provider, req) {
   const url = joinUrl(provider.baseUrl || "https://api.anthropic.com", "/v1/messages");
   const { system, messages } = splitSystem(req.messages);
@@ -80,11 +104,14 @@ async function* streamAnthropicChat(provider, req) {
   if (system) body.system = system;
   const tools = toAnthropicTools(req.tools);
   if (tools) body.tools = tools;
+  applyAnthropicThinking(body, req);
 
   const headers = {
     "Content-Type": "application/json",
     "anthropic-version": "2023-06-01",
-    "x-api-key": provider.apiKey || "",
+    ...(req.oauthBearerToken
+      ? { Authorization: `Bearer ${req.oauthBearerToken}` }
+      : { "x-api-key": provider.apiKey || "" }),
     ...(provider.headers || {}),
   };
 
@@ -178,6 +205,9 @@ async function* streamAnthropicChat(provider, req) {
             if (delta.type === "text_delta" && delta.text) {
               yield { type: "text", text: delta.text };
             }
+            if (delta.type === "thinking_delta" && delta.thinking) {
+              yield { type: "reasoning", text: delta.thinking };
+            }
             if (delta.type === "input_json_delta" && delta.partial_json) {
               const index = json.index ?? 0;
               const st = toolState.get(index);
@@ -261,7 +291,9 @@ async function chatAnthropicOnce(provider, req) {
   const headers = {
     "Content-Type": "application/json",
     "anthropic-version": "2023-06-01",
-    "x-api-key": provider.apiKey || "",
+    ...(req.oauthBearerToken
+      ? { Authorization: `Bearer ${req.oauthBearerToken}` }
+      : { "x-api-key": provider.apiKey || "" }),
     ...(provider.headers || {}),
   };
   const body = {
@@ -272,6 +304,7 @@ async function chatAnthropicOnce(provider, req) {
     temperature: req.temperature ?? 0.2,
   };
   if (system) body.system = system;
+  applyAnthropicThinking(body, req);
 
   const timeoutMs = req.timeoutMs ?? provider.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxRetries =
