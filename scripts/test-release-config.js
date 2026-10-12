@@ -210,6 +210,12 @@ test("回归门禁在无 Electron 二进制时可用", () => {
   assert(read(path.join(root, "scripts/release/ci-electron-shim.js")).includes("isTestEntry"));
   assert.doesNotMatch(commands(build), /ELECTRON_MIRROR|electron-builder|npm run dist\b/);
 });
+test("生成运行时时移除第三方 env 模板并拒绝真实 env", () => {
+  assert(prepareSource.includes("example|sample|template"), "缺少 env 模板清理规则");
+  assert(prepareSource.includes("Refusing to ship an env file"));
+  assert(prepareSource.indexOf("strip(runtime)") < prepareSource.indexOf('"manifest.json"'));
+  assert(prepareSource.indexOf("strip(runtime)") > prepareSource.indexOf('"npm", "ci"'));
+});
 test("核心技能归档校验后解压，PR构建不发布", () => {
   assert.match(versions.coreArchive.sha256, /^[a-f0-9]{64}$/);
   const run = commands(build);

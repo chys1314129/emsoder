@@ -80,12 +80,25 @@ function main(args) {
   fs.copyFileSync(path.join(__dirname, "runtime-package-lock.json"), path.join(runtime, "package-lock.json"));
   const npm = path.join(runtime, "node/node_modules/npm/bin/npm-cli.js");
   execFileSync(path.join(runtime, "node/node.exe"), [npm, "ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: runtime, stdio: "inherit" });
+  // Third-party packages ship `.env.example` templates. They are never read at
+  // runtime, and keeping them would force the release validator to make a
+  // judgement call about which placeholder values are safe. Remove them so the
+  // "no env files in a release" rule stays absolute; a real .env is an error.
+  const strip = (dir) => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) { strip(p); continue; }
+      if (/^\.env\.(?:example|sample|template)$/i.test(ent.name)) { fs.rmSync(p); continue; }
+      if (/^\.env(?:\..*)?$/i.test(ent.name)) throw new Error(`Refusing to ship an env file: ${path.relative(root, p)}`);
+    }
+  };
+  strip(runtime);
   nodeForwarder("firecrawl", "node_modules/firecrawl-cli/dist/index.js", bin);
   nodeForwarder("mmx", "node_modules/mmx-cli/dist/mmx.mjs", bin);
   fs.writeFileSync(path.join(bin, "emsoder-skill-doctor.cmd"), "@echo off\r\ncall \"%~dp0node.cmd\" -v\r\ncall \"%~dp0python.cmd\" -V\r\nexit /b %errorlevel%\r\n");
+  for (const entry of ["firecrawl-cli/dist/index.js", "mmx-cli/dist/mmx.mjs"]) if (!fs.existsSync(path.join(runtime, "node_modules", entry))) throw new Error(`Missing runtime CLI: ${entry}`);
   execFileSync(py, ["-c", `import importlib,sys;assert sys.version.split()[0]=='${versions.python.version}';[importlib.import_module(m) for m in ${JSON.stringify(versions.pythonImports)}];print('Embedded Python imports OK')`], { stdio: "inherit", env: pythonEnv });
   execFileSync(py, [path.join(root, "resources/core-skills/ppt-master/scripts/image_gen.py"), "--help"], { stdio: "inherit", env: pythonEnv });
-  for (const entry of ["firecrawl-cli/dist/index.js", "mmx-cli/dist/mmx.mjs"]) if (!fs.existsSync(path.join(runtime, "node_modules", entry))) throw new Error(`Missing runtime CLI: ${entry}`);
   fs.writeFileSync(path.join(runtime, "manifest.json"), JSON.stringify({ version: 3, source: "clean-ci-downloads", runtime: { node: { bundled: true, version: versions.node.version }, python: { bundled: true, version: versions.python.version, pptMasterCoreVerified: true } }, tools: [{ name: "firecrawl", kind: "npm", version: versions.npmTools["firecrawl-cli"] }, { name: "mmx", kind: "npm", version: versions.npmTools["mmx-cli"] }, { name: "tvly", kind: "python-tool", version: "0.1.8" }], notes: ["No user configuration, environment tokens or personal skill caches included", "PDF browser-based rendering may require optional Playwright/Chromium installation"] }, null, 2));
   // Only ship core skills tracked with this source revision; never a home/cache mirror.
   const bundled = path.join(root, "resources/bundled-skills");
