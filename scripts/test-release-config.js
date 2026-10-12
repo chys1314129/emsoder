@@ -176,6 +176,29 @@ test("固定 Windows 2022、Node、Python 和 Rust 版本", () => {
   assert.equal(action(build, "actions/setup-python").with["python-version"], "3.13.12");
   assert.equal(action(build, "dtolnay/rust-toolchain").with.toolchain, versions.rust);
 });
+test("作业级 env 只使用该处允许的上下文", () => {
+  // GitHub 只在作业级 env 暴露 github/needs/strategy/matrix/vars/secrets/inputs。
+  // 使用 runner/steps/job/env 会让整个工作流判定为 Invalid workflow file，一个作业都不会启动。
+  const allowed = new Set(["github", "needs", "strategy", "matrix", "vars", "secrets", "inputs"]);
+  const seen = [];
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    for (const [key, value] of Object.entries(job.env || {})) {
+      for (const expression of String(value).matchAll(/\$\{\{([^}]*)\}\}/g)) {
+        for (const identifier of expression[1].matchAll(/(?<![.\w])[A-Za-z_][A-Za-z0-9_]*\s*\./g)) {
+          const context = identifier[0].slice(0, -1).trim();
+          seen.push(`${name}.env.${key} -> ${context}`);
+          assert(allowed.has(context), `作业级 env 不允许使用 ${context} 上下文（${name}.env.${key}）`);
+        }
+      }
+    }
+  }
+  assert(seen.length > 0 || Object.values(workflow.jobs).every((job) => !job.env || Object.keys(job.env).length === 0));
+  const runnerTemp = commands(build);
+  assert.doesNotMatch(JSON.stringify(workflow.jobs.build.env || {}), /runner\.temp/);
+  assert(runnerTemp.includes("$env:RUNNER_TEMP"));
+  assert(runnerTemp.includes("EMSODER_DOWNLOAD_DIR=$env:RUNNER_TEMP/emsoder-downloads"));
+  assert(runnerTemp.includes("EMSODER_WHEEL_DIR=$env:RUNNER_TEMP/emsoder-wheels"));
+});
 test("核心技能归档校验后解压，PR构建不发布", () => {
   assert.match(versions.coreArchive.sha256, /^[a-f0-9]{64}$/);
   const run = commands(build);
